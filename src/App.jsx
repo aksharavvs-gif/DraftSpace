@@ -296,6 +296,7 @@ function App() {
       </header>
 
       <main id="top">
+        <div key={screen} className="page-transition">
         {screen === 'landing' && (
           <>
             <section className="hero section">
@@ -903,6 +904,7 @@ function App() {
             </form>
           </section>
         )}
+        </div>
       </main>
 
       <footer className="footer">
