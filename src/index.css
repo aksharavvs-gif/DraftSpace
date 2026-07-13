@@ -1,0 +1,68 @@
+:root {
+  --text: #5f5870;
+  --text-h: #241f33;
+  --bg: #f8f4ff;
+  --border: #e7dff5;
+  --accent: #7e5dcd;
+  --accent-bg: rgba(126, 93, 205, 0.12);
+  font-family: Inter, 'Segoe UI', Roboto, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color: var(--text);
+  background: var(--bg);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(circle at top left, rgba(255,255,255,0.9), transparent 24%),
+    linear-gradient(180deg, #fdfcff 0%, var(--bg) 100%);
+  color: var(--text);
+}
+
+#root {
+  min-height: 100vh;
+}
+
+h1,
+h2,
+h3,
+h4,
+p {
+  margin: 0;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: 'Iowan Old Style', 'Palatino Linotype', 'Book Antiqua', Georgia, serif;
+  color: var(--text-h);
+  letter-spacing: -0.02em;
+}
+
+h2 {
+  font-size: clamp(1.6rem, 2.4vw, 2.25rem);
+  margin-bottom: 12px;
+}
+
+img,
+svg {
+  max-width: 100%;
+}
+
+a {
+  color: inherit;
+}
