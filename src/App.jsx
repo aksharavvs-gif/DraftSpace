@@ -36,7 +36,7 @@ const reasonOptions = [
   'Get thoughtful feedback',
   'Learn how to revise',
   'Build confidence',
-  'Share work with peers',
+  'Share work with others',
 ]
 
 const initialSubmissions = []
