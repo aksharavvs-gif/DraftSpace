@@ -40,6 +40,10 @@ const reasonOptions = [
 ]
 
 const initialSubmissions = []
+const approvedReviewerEmails = (import.meta.env.VITE_APPROVED_REVIEWER_EMAILS || '')
+  .split(',')
+  .map((email) => email.trim().toLowerCase())
+  .filter(Boolean)
 
 function App() {
   const [screen, setScreen] = useState('landing')
@@ -80,6 +84,7 @@ function App() {
   const [questionOpen, setQuestionOpen] = useState(false)
   const [reviewNotice, setReviewNotice] = useState('')
   const [authMessage, setAuthMessage] = useState('')
+  const [authContext, setAuthContext] = useState('student')
 
   const selectedSubmission = useMemo(
     () => submissions.find((item) => item.id === selectedSubmissionId) ?? null,
@@ -101,21 +106,23 @@ function App() {
     }
 
     const unsubscribe = onAuthStateChanged(auth, (user) => {
-      if (user) {
-        setProfile((current) => ({
-          ...current,
-          name: user.displayName?.split(' ')[0] || current.name,
-          email: user.email || current.email,
-        }))
-        setAuthMessage('')
-        setScreen('dashboard')
-      }
+      if (!user) return
+      if (authContext === 'reviewer') return
+
+      setProfile((current) => ({
+        ...current,
+        name: user.displayName?.split(' ')[0] || current.name,
+        email: user.email || current.email,
+      }))
+      setAuthMessage('')
+      setScreen('dashboard')
     })
 
     return unsubscribe
-  }, [])
+  }, [auth, authContext])
 
   const openAuth = () => {
+    setAuthContext('student')
     setAccountStage('auth')
     setScreen('auth')
   }
@@ -125,6 +132,8 @@ function App() {
       setAuthMessage('Google sign-in is not configured yet. Add your Firebase credentials to enable it.')
       return
     }
+
+    setAuthContext('student')
 
     try {
       const result = await signInWithPopup(auth, googleProvider)
@@ -150,6 +159,7 @@ function App() {
   const handleSignOut = async () => {
     if (!auth) return
     await signOut(auth)
+    setAuthContext('student')
     setScreen('landing')
     setAuthMessage('You signed out. Sign in again anytime.')
   }
@@ -218,12 +228,47 @@ function App() {
   const handleReviewerLogin = (event) => {
     event.preventDefault()
     if (reviewerLogin.username === 'reviewer' && reviewerLogin.password === 'draftspace') {
+      setAuthContext('reviewer')
       setReviewerLoggedIn(true)
       setReviewerSelectedSubmissionId(submissions[0]?.id ?? null)
       setScreen('reviewer-dashboard')
       setReviewNotice('')
     } else {
       setReviewNotice('The reviewer login details were not recognized.')
+    }
+  }
+
+  const handleReviewerGoogleSignIn = async () => {
+    if (!auth || !googleProvider) {
+      setReviewNotice('Google sign-in is not configured yet. Add your Firebase credentials to enable it.')
+      return
+    }
+
+    setAuthContext('reviewer')
+    setReviewNotice('')
+
+    try {
+      const result = await signInWithPopup(auth, googleProvider)
+      const reviewerEmail = result.user.email?.toLowerCase() ?? ''
+
+      if (approvedReviewerEmails.includes(reviewerEmail)) {
+        setProfile((current) => ({
+          ...current,
+          name: result.user.displayName?.split(' ')[0] || current.name,
+          email: reviewerEmail || current.email,
+        }))
+        setReviewerLoggedIn(true)
+        setReviewerSelectedSubmissionId(submissions[0]?.id ?? null)
+        setScreen('reviewer-dashboard')
+        setReviewNotice('')
+        return
+      }
+
+      await signOut(auth)
+      setReviewerLoggedIn(false)
+      setReviewNotice('Your google account is not authorized as a reviewer')
+    } catch (error) {
+      setReviewNotice(error.message || 'Google sign-in did not complete.')
     }
   }
 
@@ -730,6 +775,10 @@ function App() {
           <section className="flow-card">
             <p className="eyebrow">Reviewer access</p>
             <h2>Sign in to review student submissions.</h2>
+            <button type="button" className="button primary large" onClick={handleReviewerGoogleSignIn}>
+              Continue with Google as reviewer
+            </button>
+            <p className="tiny-note">Use your approved reviewer Google account to enter the workspace.</p>
             <form className="stacked-form" onSubmit={handleReviewerLogin}>
               <label className="field">
                 <span>Username</span>
@@ -749,8 +798,8 @@ function App() {
                 />
               </label>
               {reviewNotice && <p className="tiny-note">{reviewNotice}</p>}
-              <button type="submit" className="button primary">
-                Log in
+              <button type="submit" className="button secondary">
+                Log in with reviewer password
               </button>
             </form>
           </section>
