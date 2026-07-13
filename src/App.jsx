@@ -39,7 +39,22 @@ const reasonOptions = [
   'Share work with others',
 ]
 
-const initialSubmissions = []
+const STORAGE_KEY = 'draftspace-submissions'
+
+const readStoredSubmissions = () => {
+  if (typeof window === 'undefined') return []
+
+  try {
+    const stored = window.localStorage.getItem(STORAGE_KEY)
+    if (!stored) return []
+
+    const parsed = JSON.parse(stored)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
 const approvedReviewerEmails = (import.meta.env.VITE_APPROVED_REVIEWER_EMAILS || '')
   .split(',')
   .map((email) => email.trim().toLowerCase())
@@ -55,7 +70,7 @@ function App() {
     interests: ['Creative Writing', 'College Essays'],
     reasons: ['Better my writing', 'Preserve my personal voice'],
   })
-  const [submissions, setSubmissions] = useState(initialSubmissions)
+  const [submissions, setSubmissions] = useState(() => readStoredSubmissions())
   const [selectedSubmissionId, setSelectedSubmissionId] = useState(null)
   const [wizardStep, setWizardStep] = useState(1)
   const [draftForm, setDraftForm] = useState({
@@ -84,6 +99,7 @@ function App() {
   const [questionOpen, setQuestionOpen] = useState(false)
   const [reviewNotice, setReviewNotice] = useState('')
   const [authMessage, setAuthMessage] = useState('')
+  const [feedbackSubmittedMessage, setFeedbackSubmittedMessage] = useState('')
   const [authContext, setAuthContext] = useState('student')
 
   const selectedSubmission = useMemo(
@@ -98,6 +114,12 @@ function App() {
 
   const toggleSelection = (list, value) =>
     list.includes(value) ? list.filter((item) => item !== value) : [...list, value]
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(submissions))
+    }
+  }, [submissions])
 
   useEffect(() => {
     if (!auth) {
@@ -295,7 +317,8 @@ function App() {
       ),
     )
 
-    setReviewNotice('Feedback sent to the student and a confirmation email has been queued.')
+    setFeedbackSubmittedMessage('feedback submitted.')
+    setReviewNotice('')
     setScreen('reviewer-dashboard')
   }
 
@@ -912,6 +935,7 @@ function App() {
                         <button type="button" className="button primary" onClick={sendReviewerFeedback}>
                           Send feedback
                         </button>
+                        {feedbackSubmittedMessage && <p className="tiny-note">{feedbackSubmittedMessage}</p>}
                       </div>
                     </div>
                   </>
