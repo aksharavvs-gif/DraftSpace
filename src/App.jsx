@@ -40,6 +40,7 @@ const reasonOptions = [
 ]
 
 const STORAGE_KEY = 'draftspace-submissions'
+const ONBOARDING_STORAGE_KEY = 'draftspace-onboarding-complete'
 
 const readStoredSubmissions = () => {
   if (typeof window === 'undefined') return []
@@ -53,6 +54,36 @@ const readStoredSubmissions = () => {
   } catch {
     return []
   }
+}
+
+const readCompletedOnboardingEmails = () => {
+  if (typeof window === 'undefined') return []
+
+  try {
+    const stored = window.localStorage.getItem(ONBOARDING_STORAGE_KEY)
+    if (!stored) return []
+
+    const parsed = JSON.parse(stored)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+const hasCompletedOnboarding = (email) => {
+  if (!email) return false
+  return readCompletedOnboardingEmails().includes(email.toLowerCase())
+}
+
+const markOnboardingComplete = (email) => {
+  if (!email || typeof window === 'undefined') return
+
+  const normalizedEmail = email.toLowerCase()
+  const current = readCompletedOnboardingEmails()
+
+  if (current.includes(normalizedEmail)) return
+
+  window.localStorage.setItem(ONBOARDING_STORAGE_KEY, JSON.stringify([...current, normalizedEmail]))
 }
 
 const approvedReviewerEmails = (import.meta.env.VITE_APPROVED_REVIEWER_EMAILS || '')
@@ -131,13 +162,22 @@ function App() {
       if (!user) return
       if (authContext === 'reviewer') return
 
+      const normalizedEmail = user.email?.toLowerCase() || ''
+
       setProfile((current) => ({
         ...current,
         name: user.displayName?.split(' ')[0] || current.name,
-        email: user.email || current.email,
+        email: normalizedEmail || current.email,
       }))
       setAuthMessage('')
-      setScreen('dashboard')
+
+      if (normalizedEmail && hasCompletedOnboarding(normalizedEmail)) {
+        setScreen('dashboard')
+        return
+      }
+
+      setAccountStage('onboarding')
+      setScreen('onboarding')
     })
 
     return unsubscribe
@@ -160,11 +200,21 @@ function App() {
     try {
       const result = await signInWithPopup(auth, googleProvider)
       const user = result.user
+      const normalizedEmail = user.email?.toLowerCase() || ''
+
       setProfile((current) => ({
         ...current,
         name: user.displayName?.split(' ')[0] || current.name,
-        email: user.email || current.email,
+        email: normalizedEmail || current.email,
       }))
+
+      if (normalizedEmail && hasCompletedOnboarding(normalizedEmail)) {
+        setAccountStage('auth')
+        setScreen('dashboard')
+        setAuthMessage('')
+        return
+      }
+
       setAccountStage('onboarding')
       setScreen('onboarding')
       setAuthMessage('')
@@ -175,6 +225,7 @@ function App() {
 
   const handleOnboardingSubmit = (event) => {
     event.preventDefault()
+    markOnboardingComplete(profile.email)
     setScreen('dashboard')
   }
 
