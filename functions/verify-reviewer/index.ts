@@ -92,7 +92,8 @@ async function verifyIdToken(idToken: string) {
   return payload
 }
 
-export default async function handler(req: Request) {
+// Use Deno.serve to match Supabase Edge Function handler format.
+Deno.serve(async (req: Request) => {
   try {
     const origin = req.headers.get('origin') || ''
     const allowedOriginHeader = ALLOWED_ORIGINS ? ALLOWED_ORIGINS : '*'
@@ -195,4 +196,4 @@ export default async function handler(req: Request) {
       headers: { 'Content-Type': 'application/json' },
     })
   }
-}
+})
