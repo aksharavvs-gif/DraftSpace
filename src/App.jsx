@@ -54,19 +54,7 @@ const reasonOptions = [
 const STORAGE_KEY = 'draftspace-submissions'
 const ONBOARDING_STORAGE_KEY = 'draftspace-onboarding-complete'
 
-const readStoredSubmissions = () => {
-  if (typeof window === 'undefined') return []
-
-  try {
-    const stored = window.localStorage.getItem(STORAGE_KEY)
-    if (!stored) return []
-
-    const parsed = JSON.parse(stored)
-    return Array.isArray(parsed) ? parsed : []
-  } catch {
-    return []
-  }
-}
+// Submissions are persisted exclusively to Firestore. Do not initialize from localStorage.
 
 const formatTimestamp = (ts) => {
   try {
@@ -124,7 +112,9 @@ function App() {
     interests: ['Creative Writing', 'College Essays'],
     reasons: ['Better my writing', 'Preserve my personal voice'],
   })
-  const [submissions, setSubmissions] = useState(() => readStoredSubmissions())
+  const [submissions, setSubmissions] = useState([])
+  const [authResolved, setAuthResolved] = useState(false)
+  const [authUid, setAuthUid] = useState(null)
   const [selectedSubmissionId, setSelectedSubmissionId] = useState(null)
   const [wizardStep, setWizardStep] = useState(1)
   const [draftForm, setDraftForm] = useState({
@@ -170,11 +160,7 @@ function App() {
     list.includes(value) ? list.filter((item) => item !== value) : [...list, value]
 
   useEffect(() => {
-    if (!hasFirebaseConfig) {
-      if (typeof window !== 'undefined') {
-        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(submissions))
-      }
-    }
+    // Submissions are stored only in Firestore; do not write them to localStorage.
   }, [submissions])
 
   // Listen for persistent submissions when Firebase is configured.
@@ -183,8 +169,8 @@ function App() {
 
     let q
     try {
-      if (auth?.currentUser && auth.currentUser.uid && authContext !== 'reviewer') {
-        q = query(collection(db, 'submissions'), where('userId', '==', auth.currentUser.uid), orderBy('submitted_at', 'desc'))
+      if (authUid && authContext !== 'reviewer') {
+        q = query(collection(db, 'submissions'), where('userId', '==', authUid), orderBy('submitted_at', 'desc'))
       } else {
         // reviewers (or non-authenticated reviewer flow) see all submissions
         q = query(collection(db, 'submissions'), orderBy('submitted_at', 'desc'))
@@ -215,7 +201,7 @@ function App() {
     )
 
     return unsubscribe
-  }, [hasFirebaseConfig, db, auth, authContext])
+  }, [hasFirebaseConfig, db, authUid, authResolved, authContext])
 
   useEffect(() => {
     if (!auth) {
@@ -224,15 +210,12 @@ function App() {
     }
 
     const unsubscribe = onAuthStateChanged(auth, (user) => {
+      // mark that auth has been resolved and expose UID
+      setAuthUid(user?.uid ?? null)
+      setAuthResolved(true)
+
       if (!user) return
       if (authContext === 'reviewer') return
-
-  // If a reviewer signs in and no submission is selected yet, pick the newest one.
-  useEffect(() => {
-    if (reviewerLoggedIn && submissions.length > 0 && !reviewerSelectedSubmissionId) {
-      setReviewerSelectedSubmissionId(submissions[0].id)
-    }
-  }, [reviewerLoggedIn, submissions, reviewerSelectedSubmissionId])
 
       const normalizedEmail = user.email?.toLowerCase() || ''
 
@@ -254,6 +237,13 @@ function App() {
 
     return unsubscribe
   }, [auth, authContext])
+
+  // If a reviewer signs in and no submission is selected yet, pick the newest one.
+  useEffect(() => {
+    if (reviewerLoggedIn && submissions.length > 0 && !reviewerSelectedSubmissionId) {
+      setReviewerSelectedSubmissionId(submissions[0].id)
+    }
+  }, [reviewerLoggedIn, submissions, reviewerSelectedSubmissionId])
 
   const openAuth = () => {
     setAuthContext('student')
@@ -348,45 +338,26 @@ function App() {
 
     if (wizardStep === 3) {
       setReviewNotice('')
-
       const submit = async () => {
-        if (hasFirebaseConfig && db && auth && auth.currentUser) {
-          try {
-            const payload = {
-              title: draftForm.title,
-              reviewStatus: 'Awaiting review',
-              responseTime: 'Within 72 hours',
-              stage: draftForm.stage,
-              writingType: draftForm.writingType,
-              draft: draftForm.draft,
-              context: draftForm.context,
-              feedback: null,
-              comments: [
-                { id: 1, passage: 'The opening image felt especially alive.', note: 'This sentence carries warmth and specificity.' },
-              ],
-              questionReplies: [],
-              userId: auth.currentUser.uid || null,
-              userEmail: auth.currentUser.email || null,
-              submitted_at: serverTimestamp(),
-              responded_at: null,
-            }
+        // require Firestore and authenticated user
+        if (!hasFirebaseConfig || !db) {
+          setReviewNotice('Submission failed: server not configured. Please try again later.')
+          return
+        }
 
-            const ref = await addDoc(collection(db, 'submissions'), payload)
+        if (!authResolved) {
+          setReviewNotice('Authentication is still resolving. Please wait a moment and try again.')
+          return
+        }
 
-            // after success, we rely on the snapshot listener to populate submissions
-            setSelectedSubmissionId(ref.id)
-            setScreen('submission-success')
-            setReviewNotice('')
-          } catch (err) {
-            console.error('Error saving submission:', err)
-            setReviewNotice('Unable to save your submission. Please try again.')
-          }
-        } else {
-          // fallback to localStorage behaviour
-          const newSubmission = {
-            id: Date.now(),
+        if (!authUid) {
+          setReviewNotice('Please sign in before submitting your draft.')
+          return
+        }
+
+        try {
+          const payload = {
             title: draftForm.title,
-            submittedAt: new Date().toLocaleString(),
             reviewStatus: 'Awaiting review',
             responseTime: 'Within 72 hours',
             stage: draftForm.stage,
@@ -398,10 +369,21 @@ function App() {
               { id: 1, passage: 'The opening image felt especially alive.', note: 'This sentence carries warmth and specificity.' },
             ],
             questionReplies: [],
+            userId: authUid,
+            userEmail: profile.email || null,
+            submitted_at: serverTimestamp(),
+            responded_at: null,
           }
-          setSubmissions((current) => [newSubmission, ...current])
-          setSelectedSubmissionId(newSubmission.id)
+
+          const ref = await addDoc(collection(db, 'submissions'), payload)
+
+          // after success, rely on the snapshot listener to populate submissions
+          setSelectedSubmissionId(ref.id)
           setScreen('submission-success')
+          setReviewNotice('')
+        } catch (err) {
+          console.error('Error saving submission:', err)
+          setReviewNotice('Unable to save your submission. Please try again.')
         }
       }
 
@@ -460,55 +442,33 @@ function App() {
     if (!reviewerSelectedSubmission) return
 
     const persistFeedback = async () => {
-      if (hasFirebaseConfig && db) {
-        try {
-          const submissionDoc = doc(db, 'submissions', reviewerSelectedSubmission.id)
-          await updateDoc(submissionDoc, {
-            reviewStatus: 'Feedback ready',
-            responseTime: 'Sent today',
-            feedback: {
-              overall: reviewerFeedback.overall,
-              strengths: reviewerFeedback.strengths,
-              areas: reviewerFeedback.areas,
-              voice: reviewerFeedback.voice,
-              next: reviewerFeedback.next,
-            },
-            responded_at: serverTimestamp(),
-            questionReplies: [],
-          })
+      if (!hasFirebaseConfig || !db) {
+        setReviewNotice('Feedback cannot be saved: server not configured.')
+        return
+      }
 
-          setFeedbackSubmittedMessage('feedback submitted.')
-          setReviewNotice('')
-          setScreen('reviewer-dashboard')
-        } catch (err) {
-          console.error('Error saving feedback:', err)
-          setReviewNotice('Unable to save feedback. Please try again.')
-        }
-      } else {
-        // fallback to local state
-        setSubmissions((current) =>
-          current.map((item) =>
-            item.id === reviewerSelectedSubmission.id
-              ? {
-                  ...item,
-                  reviewStatus: 'Feedback ready',
-                  responseTime: 'Sent today',
-                  feedback: {
-                    overall: reviewerFeedback.overall,
-                    strengths: reviewerFeedback.strengths,
-                    areas: reviewerFeedback.areas,
-                    voice: reviewerFeedback.voice,
-                    next: reviewerFeedback.next,
-                  },
-                  questionReplies: [],
-                }
-              : item,
-          ),
-        )
+      try {
+        const submissionDoc = doc(db, 'submissions', reviewerSelectedSubmission.id)
+        await updateDoc(submissionDoc, {
+          reviewStatus: 'Feedback ready',
+          responseTime: 'Sent today',
+          feedback: {
+            overall: reviewerFeedback.overall,
+            strengths: reviewerFeedback.strengths,
+            areas: reviewerFeedback.areas,
+            voice: reviewerFeedback.voice,
+            next: reviewerFeedback.next,
+          },
+          responded_at: serverTimestamp(),
+          questionReplies: [],
+        })
 
         setFeedbackSubmittedMessage('feedback submitted.')
         setReviewNotice('')
         setScreen('reviewer-dashboard')
+      } catch (err) {
+        console.error('Error saving feedback:', err)
+        setReviewNotice('Unable to save feedback. Please try again.')
       }
     }
 
@@ -526,34 +486,23 @@ function App() {
     event.preventDefault()
     if (!selectedSubmission || !questionDraft.trim()) return
     const persistQuestion = async () => {
-      if (hasFirebaseConfig && db) {
-        try {
-          const submissionDoc = doc(db, 'submissions', selectedSubmission.id)
-          const reply = { id: Date.now(), text: questionDraft }
-          await updateDoc(submissionDoc, {
-            questionReplies: arrayUnion(reply),
-          })
-          setQuestionDraft('')
-          setQuestionOpen(false)
-          setReviewNotice('Your question has been shared with the reviewer.')
-        } catch (err) {
-          console.error('Error saving question reply:', err)
-          setReviewNotice('Unable to send your question. Please try again.')
-        }
-      } else {
-        setSubmissions((current) =>
-          current.map((item) =>
-            item.id === selectedSubmission.id
-              ? {
-                  ...item,
-                  questionReplies: [...item.questionReplies, { id: Date.now(), text: questionDraft }],
-                }
-              : item,
-          ),
-        )
+      if (!hasFirebaseConfig || !db) {
+        setReviewNotice('Unable to send your question: server not configured.')
+        return
+      }
+
+      try {
+        const submissionDoc = doc(db, 'submissions', selectedSubmission.id)
+        const reply = { id: Date.now(), text: questionDraft }
+        await updateDoc(submissionDoc, {
+          questionReplies: arrayUnion(reply),
+        })
         setQuestionDraft('')
         setQuestionOpen(false)
         setReviewNotice('Your question has been shared with the reviewer.')
+      } catch (err) {
+        console.error('Error saving question reply:', err)
+        setReviewNotice('Unable to send your question. Please try again.')
       }
     }
 
@@ -906,9 +855,17 @@ function App() {
                 <button type="button" className="button secondary" onClick={() => goToSubmissionStep(2)}>
                   Back
                 </button>
-                <button type="button" className="button primary" onClick={handleWizardNext}>
+                <button
+                  type="button"
+                  className="button primary"
+                  onClick={handleWizardNext}
+                  disabled={!authResolved || !authUid || !hasFirebaseConfig}
+                >
                   Send submission
                 </button>
+                {(!authResolved || !authUid || !hasFirebaseConfig) && (
+                  <p className="tiny-note">Sign in required and server must be configured to submit.</p>
+                )}
               </div>
             </form>
           </section>
