@@ -1,5 +1,6 @@
 import { initializeApp } from 'firebase/app'
 import { getAuth, GoogleAuthProvider } from 'firebase/auth'
+import { getFirestore } from 'firebase/firestore'
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -16,10 +17,11 @@ const hasFirebaseConfig = Object.values(firebaseConfig).every((value) => Boolean
 const app = hasFirebaseConfig ? initializeApp(firebaseConfig) : null
 const auth = app ? getAuth(app) : null
 const googleProvider = app ? new GoogleAuthProvider() : null
+const db = app ? getFirestore(app) : null
 
 if (googleProvider) {
   googleProvider.addScope('profile')
   googleProvider.addScope('email')
 }
 
-export { auth, googleProvider, hasFirebaseConfig }
+export { auth, googleProvider, hasFirebaseConfig, db }
