@@ -63,6 +63,25 @@ const formatTimestamp = (ts) => {
   }
 }
 
+const normalizeWritingType = (raw) => {
+  if (!raw && raw !== '') return ''
+  if (Array.isArray(raw)) return raw[0] || ''
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim()
+    // handle legacy stringified array like '["Personal Essay"]'
+    if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+      try {
+        const parsed = JSON.parse(trimmed)
+        if (Array.isArray(parsed)) return parsed[0] || ''
+      } catch (e) {
+        // fallthrough to return raw string
+      }
+    }
+    return raw
+  }
+  return ''
+}
+
 const readCompletedOnboardingEmails = () => {
   if (typeof window === 'undefined') return []
 
@@ -172,7 +191,7 @@ function App() {
       id: row.id,
       title: row.title,
       draft: row.draft,
-      writingType: row.writing_type || [],
+      writingType: normalizeWritingType(row.writing_type),
       stage: row.stage,
       context: row.context,
       reviewStatus: row.review_status,
@@ -404,7 +423,8 @@ function App() {
             review_status: 'Awaiting review',
             response_time: 'Within 72 hours',
             stage: draftForm.stage,
-            writing_type: draftForm.writingType,
+            // writing_type stored as text in DB; send single string
+            writing_type: Array.isArray(draftForm.writingType) ? draftForm.writingType[0] || '' : draftForm.writingType || '',
             draft: draftForm.draft,
             context: draftForm.context,
             comments: [
@@ -460,7 +480,7 @@ function App() {
             id: inserted.id,
             title: inserted.title,
             draft: inserted.draft,
-            writingType: inserted.writing_type || [],
+            writingType: normalizeWritingType(inserted.writing_type),
             stage: inserted.stage,
             context: inserted.context,
             reviewStatus: inserted.review_status,
@@ -629,7 +649,7 @@ function App() {
             id: updatedRow.id,
             title: updatedRow.title,
             draft: updatedRow.draft,
-            writingType: updatedRow.writing_type || [],
+            writingType: normalizeWritingType(updatedRow.writing_type),
             stage: updatedRow.stage,
             context: updatedRow.context,
             reviewStatus: updatedRow.review_status,
@@ -926,7 +946,7 @@ function App() {
                         {item.reviewStatus}
                       </span>
                     </div>
-                    <p className="flow-copy">{item.writingType.join(', ')}</p>
+                    <p className="flow-copy">{item.writingType || ''}</p>
                     <p className="flow-copy">Expected response: {item.responseTime}</p>
                     <div className="card-actions">
                       <button
