@@ -1,4 +1,4 @@
-import { createRemoteJWKSet, jwtVerify } from 'https://cdn.jsdelivr.net/npm/jose@4.14.4/+esm'
+import { decodeProtectedHeader, importJWK, jwtVerify } from 'jose'
 
 // Supabase Edge Function to verify Firebase ID token and check reviewers table.
 // Required environment variables (set in Supabase Edge Function secrets):
@@ -12,19 +12,67 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '
 const FIREBASE_PROJECT_ID = Deno.env.get('FIREBASE_PROJECT_ID') || ''
 const ALLOWED_ORIGINS = (Deno.env.get('ALLOWED_ORIGINS') || '')
 
-const JWKS = createRemoteJWKSet(new URL('https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com'))
+const JWKS_URL = 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com'
+
+// Simple in-memory cache for JWKS
+let jwksCache: { keys: any[]; fetchedAt: number } | null = null
+const JWKS_TTL = 5 * 60 * 1000 // 5 minutes
+
+async function fetchJwksWithTimeout(timeoutMs = 3000) {
+  const controller = new AbortController()
+  const id = setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    const res = await fetch(JWKS_URL, { signal: controller.signal })
+    clearTimeout(id)
+    if (!res.ok) throw new Error(`JWKS fetch failed: ${res.status}`)
+    const body = await res.json()
+    if (!body?.keys || !Array.isArray(body.keys)) throw new Error('Invalid JWKS payload')
+    return body.keys
+  } catch (err) {
+    clearTimeout(id)
+    throw err
+  }
+}
+
+async function getJwks() {
+  const now = Date.now()
+  if (jwksCache && now - jwksCache.fetchedAt < JWKS_TTL) return jwksCache.keys
+
+  try {
+    const keys = await fetchJwksWithTimeout(3000)
+    jwksCache = { keys, fetchedAt: Date.now() }
+    return keys
+  } catch (err) {
+    // If fetch failed but cache exists, return cached keys as a fallback
+    if (jwksCache) return jwksCache.keys
+    throw err
+  }
+}
 
 async function verifyIdToken(idToken: string) {
   if (!FIREBASE_PROJECT_ID) throw new Error('FIREBASE_PROJECT_ID not configured')
 
   const issuer = `https://securetoken.google.com/${FIREBASE_PROJECT_ID}`
 
-  const { payload } = await jwtVerify(idToken, JWKS, {
+  // decode header to pick the right key
+  const header = await decodeProtectedHeader(idToken)
+  const kid = header.kid
+
+  const jwks = await getJwks()
+
+  // find matching key by kid, fallback to trying all
+  const jwk = jwks.find((k) => k.kid === kid) || jwks[0]
+  if (!jwk) throw new Error('No JWK available')
+
+  const alg = jwk.alg || 'RS256'
+  const key = await importJWK(jwk, alg)
+
+  const { payload } = await jwtVerify(idToken, key, {
     issuer,
     audience: FIREBASE_PROJECT_ID,
   })
 
-  // payload.sub is the Firebase UID
   return payload
 }
 
