@@ -97,10 +97,8 @@ const markOnboardingComplete = (email) => {
   window.localStorage.setItem(ONBOARDING_STORAGE_KEY, JSON.stringify([...current, normalizedEmail]))
 }
 
-const approvedReviewerEmails = (import.meta.env.VITE_APPROVED_REVIEWER_EMAILS || '')
-  .split(',')
-  .map((email) => email.trim().toLowerCase())
-  .filter(Boolean)
+// Note: reviewer authorization is handled server-side via Supabase Edge Function.
+// The old VITE_APPROVED_REVIEWER_EMAILS client-side whitelist was removed.
 
 function App() {
   const [screen, setScreen] = useState('landing')
@@ -124,7 +122,7 @@ function App() {
     stage: 'Drafting',
     context: '',
   })
-  const [reviewerLogin, setReviewerLogin] = useState({ username: '', password: '' })
+  // local reviewer password login removed; reviewers authorize via Edge Function
   const [reviewerLoggedIn, setReviewerLoggedIn] = useState(false)
   const [reviewerSelectedSubmissionId, setReviewerSelectedSubmissionId] = useState(null)
   const [reviewerFeedback, setReviewerFeedback] = useState({
@@ -391,19 +389,6 @@ function App() {
     }
   }
 
-  const handleReviewerLogin = (event) => {
-    event.preventDefault()
-    if (reviewerLogin.username === 'reviewer' && reviewerLogin.password === 'draftspace') {
-      setAuthContext('reviewer')
-      setReviewerLoggedIn(true)
-      setReviewerSelectedSubmissionId(submissions[0]?.id ?? null)
-      setScreen('reviewer-dashboard')
-      setReviewNotice('')
-    } else {
-      setReviewNotice('The reviewer login details were not recognized.')
-    }
-  }
-
   const handleReviewerGoogleSignIn = async () => {
     if (!auth || !googleProvider) {
       setReviewNotice('Google sign-in is not configured yet. Add your Firebase credentials to enable it.')
@@ -415,9 +400,34 @@ function App() {
 
     try {
       const result = await signInWithPopup(auth, googleProvider)
-      const reviewerEmail = result.user.email?.toLowerCase() ?? ''
 
-      if (approvedReviewerEmails.includes(reviewerEmail)) {
+      // get a fresh Firebase ID token and POST to the Supabase Edge Function
+      const idToken = await result.user.getIdToken()
+
+      const verifyUrl = import.meta.env.VITE_VERIFY_REVIEWER_URL
+      if (!verifyUrl) {
+        // No verification endpoint configured
+        await signOut(auth)
+        setReviewNotice('Reviewer verification endpoint not configured. Contact the admin.')
+        return
+      }
+
+      const resp = await fetch(verifyUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idToken }),
+      })
+
+      if (!resp.ok) {
+        await signOut(auth)
+        setReviewerLoggedIn(false)
+        setReviewNotice('Reviewer verification failed. Access denied.')
+        return
+      }
+
+      const data = await resp.json()
+      if (data?.isReviewer) {
+        const reviewerEmail = result.user.email?.toLowerCase() ?? ''
         setProfile((current) => ({
           ...current,
           name: result.user.displayName?.split(' ')[0] || current.name,
@@ -434,7 +444,8 @@ function App() {
       setReviewerLoggedIn(false)
       setReviewNotice('Your google account is not authorized as a reviewer')
     } catch (error) {
-      setReviewNotice(error.message || 'Google sign-in did not complete.')
+      console.error('Reviewer sign-in error', error)
+      setReviewNotice(error?.message || 'Google sign-in did not complete.')
     }
   }
 
@@ -975,29 +986,7 @@ function App() {
               Continue with Google as reviewer
             </button>
             <p className="tiny-note">Use your approved reviewer Google account to enter the workspace.</p>
-            <form className="stacked-form" onSubmit={handleReviewerLogin}>
-              <label className="field">
-                <span>Username</span>
-                <input
-                  value={reviewerLogin.username}
-                  onChange={(event) => setReviewerLogin((current) => ({ ...current, username: event.target.value }))}
-                  placeholder="reviewer"
-                />
-              </label>
-              <label className="field">
-                <span>Password</span>
-                <input
-                  type="password"
-                  value={reviewerLogin.password}
-                  onChange={(event) => setReviewerLogin((current) => ({ ...current, password: event.target.value }))}
-                  placeholder="draftspace"
-                />
-              </label>
-              {reviewNotice && <p className="tiny-note">{reviewNotice}</p>}
-              <button type="submit" className="button secondary">
-                Log in with reviewer password
-              </button>
-            </form>
+            {reviewNotice && <p className="tiny-note">{reviewNotice}</p>}
           </section>
         )}
 
