@@ -103,10 +103,24 @@ Deno.serve(async (req: Request) => {
     // Accept Authorization Bearer <idToken> or body.idToken
     let idToken = null
     const authHeader = req.headers.get('authorization') || ''
-    if (authHeader.toLowerCase().startsWith('bearer ')) {
-      idToken = authHeader.slice(7).trim()
+    if (!authHeader && !body?.idToken) {
+      console.log('create-submission: missing authorization header and body.idToken')
     }
-    if (!idToken && body?.idToken) idToken = body.idToken
+
+    if (authHeader) {
+      if (!authHeader.toLowerCase().startsWith('bearer ')) {
+        console.log('create-submission: malformed authorization header')
+      } else {
+        idToken = authHeader.slice(7).trim()
+        console.log('create-submission: received authorization header; token length=', idToken.length)
+      }
+    }
+
+    if (!idToken && body?.idToken) {
+      // body.idToken present (less common); do not log its value
+      idToken = body.idToken
+      console.log('create-submission: received idToken in request body; token length=', idToken?.length || 0)
+    }
 
     if (!idToken) {
       return new Response(JSON.stringify({ error: 'Missing idToken' }), { status: 400, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': allowedOriginHeader } })
@@ -115,8 +129,9 @@ Deno.serve(async (req: Request) => {
     let payload: any
     try {
       payload = await verifyIdToken(idToken)
-    } catch (err) {
-      console.error('Token verification failed', err)
+    } catch (err: any) {
+      // Log verification error safely (name/message only)
+      console.log('create-submission: firebase token verification failed', { name: err?.name || null, message: err?.message || null })
       return new Response(JSON.stringify({ error: 'Invalid token' }), { status: 401, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': allowedOriginHeader } })
     }
 

@@ -422,9 +422,11 @@ function App() {
           }
 
           // get a fresh Firebase ID token and POST to the Edge Function
-          console.log('About to call auth.currentUser.getIdToken(); auth.currentUser=', auth?.currentUser || null)
+          console.log('About to call auth.currentUser.getIdToken(); hasCurrentUser=', !!auth?.currentUser, 'uid=', auth?.currentUser?.uid || null)
           const idToken = await auth.currentUser.getIdToken()
 
+          // Safe diagnostic: do not print the token itself
+          console.log('Submission diagnostics:', { hasCurrentUser: !!auth?.currentUser, uid: auth?.currentUser?.uid || null, hasIdToken: Boolean(idToken), idTokenLength: idToken?.length || 0 })
           console.log('About to fetch submitUrl; idToken present=', Boolean(idToken))
           const resp = await fetch(submitUrl, {
             method: 'POST',
