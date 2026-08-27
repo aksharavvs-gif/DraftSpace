@@ -58,15 +58,22 @@ async function verifyIdToken(idToken: string) {
   const issuer = `https://securetoken.google.com/${FIREBASE_PROJECT_ID}`
 
   // lazy-load jose to avoid blocking on module initialization during cold start
+  const importStart = Date.now()
   if (!joseModule) {
+    console.log('verifyIdToken: importing jose...')
     joseModule = await import('npm:jose@4.14.4')
+    console.log('verifyIdToken: imported jose', { importMs: Date.now() - importStart })
+  } else {
+    console.log('verifyIdToken: jose module cached')
   }
 
   // decode header to pick the right key
   const header = await joseModule.decodeProtectedHeader(idToken)
   const kid = header.kid
 
+  const jwksStart = Date.now()
   const jwks = await getJwks()
+  console.log('verifyIdToken: jwks fetched', { jwksMs: Date.now() - jwksStart, keys: jwks?.length ?? 0 })
 
   // find matching key by kid, fallback to trying all
   const jwk = jwks.find((k) => k.kid === kid) || jwks[0]
@@ -75,29 +82,31 @@ async function verifyIdToken(idToken: string) {
   const alg = jwk.alg || 'RS256'
   const key = await joseModule.importJWK(jwk, alg)
 
+  const verifyStart = Date.now()
   const { payload } = await joseModule.jwtVerify(idToken, key, {
     issuer,
     audience: FIREBASE_PROJECT_ID,
   })
+  console.log('verifyIdToken: jwtVerify complete', { verifyMs: Date.now() - verifyStart })
 
   return payload
 }
 
 export default async function handler(req: Request) {
   try {
+    const origin = req.headers.get('origin') || ''
+    const allowedOriginHeader = ALLOWED_ORIGINS ? ALLOWED_ORIGINS : '*'
+
     if (req.method === 'OPTIONS') {
       return new Response(null, {
         status: 204,
         headers: {
-          'Access-Control-Allow-Origin': ALLOWED_ORIGINS || '*',
+          'Access-Control-Allow-Origin': allowedOriginHeader,
           'Access-Control-Allow-Methods': 'POST, OPTIONS',
           'Access-Control-Allow-Headers': 'Content-Type, Authorization',
         },
       })
     }
-
-    const origin = req.headers.get('origin') || ''
-    const allowedOriginHeader = ALLOWED_ORIGINS ? ALLOWED_ORIGINS : '*'
 
     const body = await req.json().catch(() => null)
     let idToken = body?.idToken
