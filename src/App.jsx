@@ -378,6 +378,7 @@ function App() {
     if (wizardStep === 3) {
       setReviewNotice('')
       const submit = async () => {
+      console.log('submit() invoked: wizardStep=3, authResolved=', authResolved, 'authUid=', authUid, 'hasFirebaseConfig=', hasFirebaseConfig)
         // require Firebase config and authenticated user
         if (!hasFirebaseConfig) {
           setReviewNotice('Submission failed: server not configured. Please try again later.')
@@ -414,14 +415,17 @@ function App() {
           }
 
           const submitUrl = import.meta.env.VITE_SUBMIT_SUBMISSION_URL
+          console.log('submitUrl from env:', submitUrl)
           if (!submitUrl) {
             setReviewNotice('Submission endpoint not configured. Contact the admin.')
             return
           }
 
           // get a fresh Firebase ID token and POST to the Edge Function
+          console.log('About to call auth.currentUser.getIdToken(); auth.currentUser=', auth?.currentUser || null)
           const idToken = await auth.currentUser.getIdToken()
 
+          console.log('About to fetch submitUrl; idToken present=', Boolean(idToken))
           const resp = await fetch(submitUrl, {
             method: 'POST',
             headers: {
