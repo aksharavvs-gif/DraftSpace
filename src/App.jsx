@@ -455,7 +455,29 @@ function App() {
             return
           }
 
-          // after success, update UI using returned row
+          // Map backend row to UI shape (same mapping as realtime subscriber)
+          const mapped = {
+            id: inserted.id,
+            title: inserted.title,
+            draft: inserted.draft,
+            writingType: inserted.writing_type || [],
+            stage: inserted.stage,
+            context: inserted.context,
+            reviewStatus: inserted.review_status,
+            responseTime: inserted.response_time,
+            feedback: inserted.feedback || null,
+            comments: inserted.comments || [],
+            questionReplies: inserted.question_replies || [],
+            userId: inserted.user_id,
+            userEmail: inserted.user_email,
+            submitted_at: inserted.submitted_at,
+            responded_at: inserted.responded_at,
+            submittedAt: formatTimestamp(inserted.submitted_at) || 'Unknown',
+            respondedAt: formatTimestamp(inserted.responded_at) || null,
+          }
+
+          // after success, add the new submission to local state so student sees it immediately
+          setSubmissions((current) => [mapped, ...current])
           setSelectedSubmissionId(inserted.id)
           setScreen('submission-success')
           setReviewNotice('')
@@ -597,8 +619,32 @@ function App() {
           question_replies: [],
         }
 
-        const updateRes = await supabase.from('submissions').update(submissionUpdate).eq('id', reviewerSelectedSubmission.id)
+        const updateRes = await supabase.from('submissions').update(submissionUpdate).eq('id', reviewerSelectedSubmission.id).select().single()
         if (updateRes.error) throw updateRes.error
+
+        // Update local submissions state with the returned updated row
+        const updatedRow = updateRes.data
+        if (updatedRow) {
+          setSubmissions((current) => current.map((s) => (s.id === updatedRow.id ? {
+            id: updatedRow.id,
+            title: updatedRow.title,
+            draft: updatedRow.draft,
+            writingType: updatedRow.writing_type || [],
+            stage: updatedRow.stage,
+            context: updatedRow.context,
+            reviewStatus: updatedRow.review_status,
+            responseTime: updatedRow.response_time,
+            feedback: updatedRow.feedback || null,
+            comments: updatedRow.comments || [],
+            questionReplies: updatedRow.question_replies || [],
+            userId: updatedRow.user_id,
+            userEmail: updatedRow.user_email,
+            submitted_at: updatedRow.submitted_at,
+            responded_at: updatedRow.responded_at,
+            submittedAt: formatTimestamp(updatedRow.submitted_at) || 'Unknown',
+            respondedAt: formatTimestamp(updatedRow.responded_at) || null,
+          } : s)));
+        }
 
         setFeedbackSubmittedMessage('feedback submitted.')
         setReviewNotice('')
