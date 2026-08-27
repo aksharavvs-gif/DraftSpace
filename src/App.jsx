@@ -227,6 +227,13 @@ function App() {
       if (!user) return
       if (authContext === 'reviewer') return
 
+  // If a reviewer signs in and no submission is selected yet, pick the newest one.
+  useEffect(() => {
+    if (reviewerLoggedIn && submissions.length > 0 && !reviewerSelectedSubmissionId) {
+      setReviewerSelectedSubmissionId(submissions[0].id)
+    }
+  }, [reviewerLoggedIn, submissions, reviewerSelectedSubmissionId])
+
       const normalizedEmail = user.email?.toLowerCase() || ''
 
       setProfile((current) => ({

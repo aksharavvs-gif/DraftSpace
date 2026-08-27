@@ -301,7 +301,7 @@
 .chat-form input {
   border: 1px solid var(--border);
   border-radius: 16px;
-  padding: 12px 14px;
+  padding: 14px 16px;
   font: inherit;
   background: #fcfbff;
   color: var(--text-h);
@@ -447,7 +447,7 @@
   width: 100%;
   justify-content: space-between;
   text-align: left;
-  padding: 12px 14px;
+  padding: 14px 16px;
   margin-top: 10px;
 }
 
