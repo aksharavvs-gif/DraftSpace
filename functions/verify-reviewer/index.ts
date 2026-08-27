@@ -1,4 +1,4 @@
-import { decodeProtectedHeader, importJWK, jwtVerify } from 'jose'
+import { decodeProtectedHeader, importJWK, jwtVerify } from 'npm:jose@4.14.4'
 
 // Supabase Edge Function to verify Firebase ID token and check reviewers table.
 // Required environment variables (set in Supabase Edge Function secrets):
