@@ -997,7 +997,7 @@ function App() {
                   type="button"
                   className="button primary"
                   onClick={handleWizardNext}
-                  disabled={!authResolved || !authUid || !hasFirebaseConfig || !import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY}
+                  disabled={!authResolved || !authUid || !hasFirebaseConfig || !import.meta.env.VITE_SUBMIT_SUBMISSION_URL}
                 >
                   Send submission
                 </button>
