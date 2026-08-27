@@ -1,4 +1,6 @@
-import { decodeProtectedHeader, importJWK, jwtVerify } from 'npm:jose@4.14.4'
+// jose will be dynamically imported inside the verification path to avoid blocking
+// module evaluation during cold-start (improves OPTIONS preflight latency).
+let joseModule: any = null
 
 // Supabase Edge Function to verify Firebase ID token and check reviewers table.
 // Required environment variables (set in Supabase Edge Function secrets):
@@ -55,8 +57,13 @@ async function verifyIdToken(idToken: string) {
 
   const issuer = `https://securetoken.google.com/${FIREBASE_PROJECT_ID}`
 
+  // lazy-load jose to avoid blocking on module initialization during cold start
+  if (!joseModule) {
+    joseModule = await import('npm:jose@4.14.4')
+  }
+
   // decode header to pick the right key
-  const header = await decodeProtectedHeader(idToken)
+  const header = await joseModule.decodeProtectedHeader(idToken)
   const kid = header.kid
 
   const jwks = await getJwks()
@@ -66,9 +73,9 @@ async function verifyIdToken(idToken: string) {
   if (!jwk) throw new Error('No JWK available')
 
   const alg = jwk.alg || 'RS256'
-  const key = await importJWK(jwk, alg)
+  const key = await joseModule.importJWK(jwk, alg)
 
-  const { payload } = await jwtVerify(idToken, key, {
+  const { payload } = await joseModule.jwtVerify(idToken, key, {
     issuer,
     audience: FIREBASE_PROJECT_ID,
   })
