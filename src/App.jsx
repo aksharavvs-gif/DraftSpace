@@ -400,11 +400,25 @@ function App() {
 
     try {
       const result = await signInWithPopup(auth, googleProvider)
+      // Log sign-in success and Firebase UID (no tokens)
+      console.log('Reviewer sign-in: signInWithPopup succeeded; uid=', result.user?.uid)
 
       // get a fresh Firebase ID token and POST to the Supabase Edge Function
       const idToken = await result.user.getIdToken()
 
       const verifyUrl = import.meta.env.VITE_VERIFY_REVIEWER_URL
+      // Log presence/value (non-secret): show whether present and the host if parseable
+      try {
+        if (verifyUrl) {
+          const host = new URL(verifyUrl).host
+          console.log('VITE_VERIFY_REVIEWER_URL: present; host=', host)
+        } else {
+          console.log('VITE_VERIFY_REVIEWER_URL: missing')
+        }
+      } catch (e) {
+        console.log('VITE_VERIFY_REVIEWER_URL: present; (unparsable)')
+      }
+
       if (!verifyUrl) {
         // No verification endpoint configured
         await signOut(auth)
@@ -412,11 +426,24 @@ function App() {
         return
       }
 
+      console.log('About to POST to reviewer verification endpoint')
       const resp = await fetch(verifyUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ idToken }),
       })
+
+      console.log('verify-reviewer response status=', resp.status, resp.statusText)
+
+      // read response text and attempt to parse JSON for logging
+      const respText = await resp.text()
+      let data = null
+      try {
+        data = JSON.parse(respText)
+        console.log('verify-reviewer response JSON=', data)
+      } catch (parseErr) {
+        console.log('verify-reviewer response text=', respText)
+      }
 
       if (!resp.ok) {
         await signOut(auth)
@@ -425,7 +452,6 @@ function App() {
         return
       }
 
-      const data = await resp.json()
       if (data?.isReviewer) {
         const reviewerEmail = result.user.email?.toLowerCase() ?? ''
         setProfile((current) => ({
@@ -444,7 +470,8 @@ function App() {
       setReviewerLoggedIn(false)
       setReviewNotice('Your google account is not authorized as a reviewer')
     } catch (error) {
-      console.error('Reviewer sign-in error', error)
+      // Log the caught error name and message; do not log any tokens
+      console.error('Reviewer sign-in error:', error?.name, error?.message)
       setReviewNotice(error?.message || 'Google sign-in did not complete.')
     }
   }
