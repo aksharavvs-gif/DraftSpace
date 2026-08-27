@@ -226,6 +226,19 @@ function App() {
           res = await supabase.from('submissions').select('*').order('submitted_at', { ascending: false })
         }
 
+        // Diagnostic logging for subscription fetch
+        try {
+          console.log('subscriptions: authUid=', authUid, 'authContext=', authContext)
+          if (res.error) {
+            console.log('subscriptions: fetch error', res.error)
+          } else {
+            const ids = (res.data || []).map((r) => r.id)
+            console.log('subscriptions: fetched rows=', (res.data || []).length, 'ids=', ids)
+          }
+        } catch (diagErr) {
+          console.log('subscriptions: diagnostic error', diagErr)
+        }
+
         if (res.error) {
           console.error('Error fetching submissions', res.error)
           setReviewNotice('Unable to load submissions from the server.')
@@ -1207,21 +1220,42 @@ function App() {
 
             <div className="reviewer-grid">
               <aside className="reviewer-list card">
-                <h3>Assigned submissions</h3>
-                {submissions.length === 0 ? (
-                  <p className="flow-copy">No student drafts yet.</p>
+                <h3>Awaiting review</h3>
+                {submissions.filter((s) => s.reviewStatus === 'Awaiting review').length === 0 ? (
+                  <p className="flow-copy">No student drafts awaiting review.</p>
                 ) : (
-                  submissions.map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      className={`submission-item review-item ${reviewerSelectedSubmissionId === item.id ? 'selected' : ''}`}
-                      onClick={() => setReviewerSelectedSubmissionId(item.id)}
-                    >
-                      <strong>{item.title}</strong>
-                      <span>{item.reviewStatus}</span>
-                    </button>
-                  ))
+                  submissions
+                    .filter((s) => s.reviewStatus === 'Awaiting review')
+                    .map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className={`submission-item review-item ${reviewerSelectedSubmissionId === item.id ? 'selected' : ''}`}
+                        onClick={() => setReviewerSelectedSubmissionId(item.id)}
+                      >
+                        <strong>{item.title}</strong>
+                        <span>{item.reviewStatus}</span>
+                      </button>
+                    ))
+                )}
+
+                <h3 style={{ marginTop: '1rem' }}>Completed reviews</h3>
+                {submissions.filter((s) => s.reviewStatus === 'Feedback ready').length === 0 ? (
+                  <p className="flow-copy">No completed reviews yet.</p>
+                ) : (
+                  submissions
+                    .filter((s) => s.reviewStatus === 'Feedback ready')
+                    .map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className={`submission-item review-item ${reviewerSelectedSubmissionId === item.id ? 'selected' : ''}`}
+                        onClick={() => setReviewerSelectedSubmissionId(item.id)}
+                      >
+                        <strong>{item.title}</strong>
+                        <span>{item.reviewStatus}</span>
+                      </button>
+                    ))
                 )}
               </aside>
 
