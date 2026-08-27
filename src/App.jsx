@@ -1,17 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth'
-import {
-  collection,
-  addDoc,
-  doc,
-  updateDoc,
-  onSnapshot,
-  query,
-  where,
-  orderBy,
-  arrayUnion,
-  serverTimestamp,
-} from 'firebase/firestore'
+import { supabase } from './supabaseClient'
 import './App.css'
 import { auth, googleProvider, hasFirebaseConfig, db } from './firebase'
 
@@ -60,7 +49,14 @@ const formatTimestamp = (ts) => {
   try {
     if (!ts) return null
     // Firestore Timestamp has toDate(), plain JS Date is instance of Date
-    const date = typeof ts.toDate === 'function' ? ts.toDate() : ts instanceof Date ? ts : new Date(ts)
+    const date =
+      typeof ts.toDate === 'function'
+        ? ts.toDate()
+        : ts instanceof Date
+        ? ts
+        : typeof ts === 'string'
+        ? new Date(ts)
+        : new Date(ts)
     return date.toLocaleString()
   } catch {
     return null
@@ -163,42 +159,87 @@ function App() {
 
   // Listen for persistent submissions when Firebase is configured.
   useEffect(() => {
-    if (!hasFirebaseConfig || !db) return undefined
-
-    let q
-    try {
-      if (authUid && authContext !== 'reviewer') {
-        q = query(collection(db, 'submissions'), where('userId', '==', authUid), orderBy('submitted_at', 'desc'))
-      } else {
-        // reviewers (or non-authenticated reviewer flow) see all submissions
-        q = query(collection(db, 'submissions'), orderBy('submitted_at', 'desc'))
-      }
-    } catch (err) {
-      console.error('Error building submissions query', err)
+    const SUPABASE_CONFIGURED = Boolean(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY)
+    if (!SUPABASE_CONFIGURED) {
+      setReviewNotice('Supabase not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to your environment.')
       return undefined
     }
 
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const docs = snapshot.docs.map((d) => {
-          const data = d.data()
-          return {
-            id: d.id,
-            ...data,
-            submittedAt: formatTimestamp(data.submitted_at) || data.submittedAt || 'Unknown',
-            respondedAt: formatTimestamp(data.responded_at) || null,
-          }
-        })
-        setSubmissions(docs)
-      },
-      (error) => {
-        console.error('Error listening to submissions:', error)
-        setReviewNotice('Unable to load submissions from the server.')
-      },
-    )
+    let channel = null
+    let mounted = true
 
-    return unsubscribe
+    const mapRow = (row) => ({
+      id: row.id,
+      title: row.title,
+      draft: row.draft,
+      writingType: row.writing_type || [],
+      stage: row.stage,
+      context: row.context,
+      reviewStatus: row.review_status,
+      responseTime: row.response_time,
+      feedback: row.feedback || null,
+      comments: row.comments || [],
+      questionReplies: row.question_replies || [],
+      userId: row.user_id,
+      userEmail: row.user_email,
+      submitted_at: row.submitted_at,
+      responded_at: row.responded_at,
+      submittedAt: formatTimestamp(row.submitted_at) || 'Unknown',
+      respondedAt: formatTimestamp(row.responded_at) || null,
+    })
+
+    const handleInsert = (row) => {
+      // student-only view: ignore other users' submissions
+      if (authUid && authContext !== 'reviewer' && row.user_id !== authUid) return
+      setSubmissions((current) => [mapRow(row), ...current])
+    }
+
+    const handleUpdate = (row) => {
+      setSubmissions((current) => current.map((s) => (s.id === row.id ? mapRow(row) : s)))
+    }
+
+    const subscribe = async () => {
+      try {
+        let res
+        if (authUid && authContext !== 'reviewer') {
+          res = await supabase.from('submissions').select('*').eq('user_id', authUid).order('submitted_at', { ascending: false })
+        } else {
+          res = await supabase.from('submissions').select('*').order('submitted_at', { ascending: false })
+        }
+
+        if (res.error) {
+          console.error('Error fetching submissions', res.error)
+          setReviewNotice('Unable to load submissions from the server.')
+          return
+        }
+
+        const docs = (res.data || []).map(mapRow)
+        if (!mounted) return
+        setSubmissions(docs)
+
+        // subscribe to inserts and updates
+        channel = supabase
+          .channel('public:submissions')
+          .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'submissions' }, (payload) => {
+            handleInsert(payload.new)
+          })
+          .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'submissions' }, (payload) => {
+            handleUpdate(payload.new)
+          })
+
+        await channel.subscribe()
+      } catch (err) {
+        console.error('Error listening to submissions:', err)
+        setReviewNotice('Unable to load submissions from the server.')
+      }
+    }
+
+    subscribe()
+
+    return () => {
+      mounted = false
+      if (channel) supabase.removeChannel(channel)
+    }
   }, [hasFirebaseConfig, db, authUid, authResolved, authContext])
 
   useEffect(() => {
@@ -354,29 +395,28 @@ function App() {
         }
 
         try {
-          const payload = {
+          const row = {
             title: draftForm.title,
-            reviewStatus: 'Awaiting review',
-            responseTime: 'Within 72 hours',
+            review_status: 'Awaiting review',
+            response_time: 'Within 72 hours',
             stage: draftForm.stage,
-            writingType: draftForm.writingType,
+            writing_type: draftForm.writingType,
             draft: draftForm.draft,
             context: draftForm.context,
             feedback: null,
             comments: [
               { id: 1, passage: 'The opening image felt especially alive.', note: 'This sentence carries warmth and specificity.' },
             ],
-            questionReplies: [],
-            userId: authUid,
-            userEmail: profile.email || null,
-            submitted_at: serverTimestamp(),
-            responded_at: null,
+            question_replies: [],
+            user_id: authUid,
+            user_email: profile.email || null,
           }
 
-          const ref = await addDoc(collection(db, 'submissions'), payload)
+          const res = await supabase.from('submissions').insert([row]).select().single()
+          if (res.error) throw res.error
 
-          // after success, rely on the snapshot listener to populate submissions
-          setSelectedSubmissionId(ref.id)
+          // after success, rely on the realtime subscription to populate submissions
+          setSelectedSubmissionId(res.data.id)
           setScreen('submission-success')
           setReviewNotice('')
         } catch (err) {
@@ -480,16 +520,32 @@ function App() {
     if (!reviewerSelectedSubmission) return
 
     const persistFeedback = async () => {
-      if (!hasFirebaseConfig || !db) {
-        setReviewNotice('Feedback cannot be saved: server not configured.')
+      const SUPABASE_CONFIGURED = Boolean(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY)
+      if (!SUPABASE_CONFIGURED) {
+        setReviewNotice('Feedback cannot be saved: Supabase not configured.')
         return
       }
 
       try {
-        const submissionDoc = doc(db, 'submissions', reviewerSelectedSubmission.id)
-        await updateDoc(submissionDoc, {
-          reviewStatus: 'Feedback ready',
-          responseTime: 'Sent today',
+        // upsert review row (one review per submission)
+        const reviewRow = {
+          submission_id: reviewerSelectedSubmission.id,
+          reviewer_uid: authUid,
+          reviewer_email: profile.email || null,
+          overall: reviewerFeedback.overall,
+          strengths: reviewerFeedback.strengths,
+          areas: reviewerFeedback.areas,
+          voice: reviewerFeedback.voice,
+          next: reviewerFeedback.next,
+        }
+
+        const upsertRes = await supabase.from('reviews').upsert([reviewRow], { onConflict: 'submission_id' }).select().single()
+        if (upsertRes.error) throw upsertRes.error
+
+        // update submissions table for compatibility with current UI
+        const submissionUpdate = {
+          review_status: 'Feedback ready',
+          response_time: 'Sent today',
           feedback: {
             overall: reviewerFeedback.overall,
             strengths: reviewerFeedback.strengths,
@@ -497,9 +553,12 @@ function App() {
             voice: reviewerFeedback.voice,
             next: reviewerFeedback.next,
           },
-          responded_at: serverTimestamp(),
-          questionReplies: [],
-        })
+          responded_at: new Date().toISOString(),
+          question_replies: [],
+        }
+
+        const updateRes = await supabase.from('submissions').update(submissionUpdate).eq('id', reviewerSelectedSubmission.id)
+        if (updateRes.error) throw updateRes.error
 
         setFeedbackSubmittedMessage('feedback submitted.')
         setReviewNotice('')
@@ -524,17 +583,20 @@ function App() {
     event.preventDefault()
     if (!selectedSubmission || !questionDraft.trim()) return
     const persistQuestion = async () => {
-      if (!hasFirebaseConfig || !db) {
-        setReviewNotice('Unable to send your question: server not configured.')
+      const SUPABASE_CONFIGURED = Boolean(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY)
+      if (!SUPABASE_CONFIGURED) {
+        setReviewNotice('Unable to send your question: Supabase not configured.')
         return
       }
 
       try {
-        const submissionDoc = doc(db, 'submissions', selectedSubmission.id)
+        const getRes = await supabase.from('submissions').select('question_replies').eq('id', selectedSubmission.id).single()
+        if (getRes.error) throw getRes.error
+        const current = getRes.data?.question_replies || []
         const reply = { id: Date.now(), text: questionDraft }
-        await updateDoc(submissionDoc, {
-          questionReplies: arrayUnion(reply),
-        })
+        const newReplies = [...current, reply]
+        const updateRes = await supabase.from('submissions').update({ question_replies: newReplies }).eq('id', selectedSubmission.id)
+        if (updateRes.error) throw updateRes.error
         setQuestionDraft('')
         setQuestionOpen(false)
         setReviewNotice('Your question has been shared with the reviewer.')
@@ -897,11 +959,11 @@ function App() {
                   type="button"
                   className="button primary"
                   onClick={handleWizardNext}
-                  disabled={!authResolved || !authUid || !hasFirebaseConfig}
+                  disabled={!authResolved || !authUid || !hasFirebaseConfig || !import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY}
                 >
                   Send submission
                 </button>
-                {(!authResolved || !authUid || !hasFirebaseConfig) && (
+                {(!authResolved || !authUid || !hasFirebaseConfig || !import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) && (
                   <p className="tiny-note">Sign in required and server must be configured to submit.</p>
                 )}
               </div>
