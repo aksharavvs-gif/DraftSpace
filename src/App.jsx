@@ -378,8 +378,8 @@ function App() {
     if (wizardStep === 3) {
       setReviewNotice('')
       const submit = async () => {
-        // require Firestore and authenticated user
-        if (!hasFirebaseConfig || !db) {
+        // require Firebase config and authenticated user
+        if (!hasFirebaseConfig) {
           setReviewNotice('Submission failed: server not configured. Please try again later.')
           return
         }
@@ -395,7 +395,10 @@ function App() {
         }
 
         try {
-          const row = {
+          // Build submission payload to send to server-side Edge Function.
+          // Do NOT include user_id — the Edge Function will derive it from the
+          // verified Firebase ID token.
+          const submissionPayload = {
             title: draftForm.title,
             review_status: 'Awaiting review',
             response_time: 'Within 72 hours',
@@ -403,20 +406,51 @@ function App() {
             writing_type: draftForm.writingType,
             draft: draftForm.draft,
             context: draftForm.context,
-            feedback: null,
             comments: [
               { id: 1, passage: 'The opening image felt especially alive.', note: 'This sentence carries warmth and specificity.' },
             ],
             question_replies: [],
-            user_id: authUid,
             user_email: profile.email || null,
           }
 
-          const res = await supabase.from('submissions').insert([row]).select().single()
-          if (res.error) throw res.error
+          const submitUrl = import.meta.env.VITE_SUBMIT_SUBMISSION_URL
+          if (!submitUrl) {
+            setReviewNotice('Submission endpoint not configured. Contact the admin.')
+            return
+          }
 
-          // after success, rely on the realtime subscription to populate submissions
-          setSelectedSubmissionId(res.data.id)
+          // get a fresh Firebase ID token and POST to the Edge Function
+          const idToken = await auth.currentUser.getIdToken()
+
+          const resp = await fetch(submitUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${idToken}`,
+            },
+            body: JSON.stringify({ submission: submissionPayload }),
+          })
+
+          const text = await resp.text()
+          let data = null
+          try { data = JSON.parse(text) } catch (e) { data = text }
+
+          if (!resp.ok) {
+            console.error('Submission Edge Function error', resp.status, data)
+            // show a more specific message in dev; keep generic for users
+            setReviewNotice('Unable to save your submission. Please try again.')
+            return
+          }
+
+          const inserted = data?.submission || null
+          if (!inserted) {
+            console.error('Submission Edge Function returned unexpected payload', data)
+            setReviewNotice('Unable to save your submission. Please try again.')
+            return
+          }
+
+          // after success, update UI using returned row
+          setSelectedSubmissionId(inserted.id)
           setScreen('submission-success')
           setReviewNotice('')
         } catch (err) {
