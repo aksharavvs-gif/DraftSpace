@@ -264,6 +264,42 @@ function App() {
           } else {
             res = { error: null, data: fetchData?.submissions || [] }
           }
+        } else if (authContext === 'reviewer') {
+          const getReviewUrl = import.meta.env.VITE_GET_REVIEW_SUBMISSIONS_URL
+          if (!getReviewUrl) {
+            console.error('get-review-submissions URL not configured')
+            setReviewNotice('Reviewer submission listing endpoint not configured.')
+            return
+          }
+
+          if (!auth?.currentUser) {
+            console.log('subscribe (reviewer): auth.currentUser not available yet')
+            setReviewNotice('Authentication not ready')
+            return
+          }
+
+          const idToken = await auth.currentUser.getIdToken()
+          console.log('get-review-submissions: calling Edge Function; uid=', auth.currentUser.uid, 'idTokenLength=', idToken?.length || 0)
+
+          const fetchResp = await fetch(getReviewUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${idToken}`,
+            },
+            body: JSON.stringify({}),
+          })
+
+          const fetchText = await fetchResp.text()
+          let fetchData = null
+          try { fetchData = JSON.parse(fetchText) } catch (e) { fetchData = fetchText }
+
+          if (!fetchResp.ok) {
+            console.error('get-review-submissions Edge Function error', fetchResp.status, fetchData)
+            res = { error: fetchData || true, data: [] }
+          } else {
+            res = { error: null, data: fetchData?.submissions || [] }
+          }
         } else {
           res = await supabase.from('submissions').select('*').order('submitted_at', { ascending: false })
         }
@@ -664,62 +700,79 @@ function App() {
       }
 
       try {
-        // upsert review row (one review per submission)
-        const reviewRow = {
+        // send review to server-side submit-review Edge Function
+        const submitUrl = import.meta.env.VITE_SUBMIT_REVIEW_URL
+        if (!submitUrl) {
+          setReviewNotice('Review submission endpoint not configured.')
+          return
+        }
+
+        if (!auth?.currentUser) {
+          setReviewNotice('Authentication not ready.')
+          return
+        }
+
+        const idToken = await auth.currentUser.getIdToken()
+
+        const payload = {
           submission_id: reviewerSelectedSubmission.id,
-          reviewer_uid: authUid,
           reviewer_email: profile.email || null,
           overall: reviewerFeedback.overall,
           strengths: reviewerFeedback.strengths,
           areas: reviewerFeedback.areas,
           voice: reviewerFeedback.voice,
           next: reviewerFeedback.next,
-        }
-
-        const upsertRes = await supabase.from('reviews').upsert([reviewRow], { onConflict: 'submission_id' }).select().single()
-        if (upsertRes.error) throw upsertRes.error
-
-        // update submissions table for compatibility with current UI
-        const submissionUpdate = {
           review_status: 'Feedback ready',
-          response_time: 'Sent today',
-          feedback: {
-            overall: reviewerFeedback.overall,
-            strengths: reviewerFeedback.strengths,
-            areas: reviewerFeedback.areas,
-            voice: reviewerFeedback.voice,
-            next: reviewerFeedback.next,
+        }
+
+        const resp = await fetch(submitUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${idToken}`,
           },
-          responded_at: new Date().toISOString(),
-          question_replies: [],
+          body: JSON.stringify(payload),
+        })
+
+        const text = await resp.text()
+        let data = null
+        try { data = JSON.parse(text) } catch (e) { data = text }
+
+        if (!resp.ok) {
+          console.error('submit-review Edge Function error', resp.status, data)
+          setReviewNotice('Unable to save feedback. Please try again.')
+          return
         }
 
-        const updateRes = await supabase.from('submissions').update(submissionUpdate).eq('id', reviewerSelectedSubmission.id).select().single()
-        if (updateRes.error) throw updateRes.error
-
-        // Update local submissions state with the returned updated row
-        const updatedRow = updateRes.data
-        if (updatedRow) {
-          setSubmissions((current) => current.map((s) => (s.id === updatedRow.id ? {
-            id: updatedRow.id,
-            title: updatedRow.title,
-            draft: updatedRow.draft,
-            writingType: normalizeWritingType(updatedRow.writing_type),
-            stage: updatedRow.stage,
-            context: updatedRow.context,
-            reviewStatus: updatedRow.review_status,
-            responseTime: updatedRow.response_time,
-            feedback: updatedRow.feedback || null,
-            comments: updatedRow.comments || [],
-            questionReplies: updatedRow.question_replies || [],
-            userId: updatedRow.user_id,
-            userEmail: updatedRow.user_email,
-            submitted_at: updatedRow.submitted_at,
-            responded_at: updatedRow.responded_at,
-            submittedAt: formatTimestamp(updatedRow.submitted_at) || 'Unknown',
-            respondedAt: formatTimestamp(updatedRow.responded_at) || null,
-          } : s)));
+        const updated = data?.submission || null
+        if (!updated) {
+          console.error('submit-review returned unexpected payload', data)
+          setReviewNotice('Unable to save feedback. Please try again.')
+          return
         }
+
+        // Update local submissions state with returned updated row
+        const updatedRow = updated
+        setSubmissions((current) => current.map((s) => (s.id === updatedRow.id ? {
+          id: updatedRow.id,
+          title: updatedRow.title,
+          draft: updatedRow.draft,
+          writingType: normalizeWritingType(updatedRow.writing_type),
+          stage: updatedRow.stage,
+          context: updatedRow.context,
+          reviewStatus: updatedRow.review_status,
+          responseTime: updatedRow.response_time,
+          feedback: updatedRow.feedback || null,
+          comments: updatedRow.comments || [],
+          questionReplies: updatedRow.question_replies || [],
+          userId: updatedRow.user_id,
+          userEmail: updatedRow.user_email,
+          submitted_at: updatedRow.submitted_at,
+          responded_at: updatedRow.responded_at,
+          submittedAt: formatTimestamp(updatedRow.submitted_at) || 'Unknown',
+          respondedAt: formatTimestamp(updatedRow.responded_at) || null,
+        } : s)))
+
 
         setFeedbackSubmittedMessage('feedback submitted.')
         setReviewNotice('')

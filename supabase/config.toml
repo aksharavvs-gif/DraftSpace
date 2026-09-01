@@ -3,3 +3,9 @@ verify_jwt = false
 
 [functions.get-submissions]
 verify_jwt = false
+
+[functions.get-review-submissions]
+verify_jwt = false
+
+[functions.submit-review]
+verify_jwt = false
