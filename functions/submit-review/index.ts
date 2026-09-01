@@ -131,7 +131,6 @@ Deno.serve(async (req: Request) => {
     const reviewRow: any = {
       submission_id: submissionId,
       reviewer_uid: uid,
-      reviewer_email: body?.reviewer_email || null,
       overall: body?.overall || null,
       strengths: body?.strengths || null,
       areas: body?.areas || null,
