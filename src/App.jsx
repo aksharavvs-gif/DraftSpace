@@ -221,7 +221,41 @@ function App() {
       try {
         let res
         if (authUid && authContext !== 'reviewer') {
-          res = await supabase.from('submissions').select('*').eq('user_id', authUid).order('submitted_at', { ascending: false })
+          // Student flow: call secure Edge Function with Firebase ID token
+          const getUrl = import.meta.env.VITE_GET_SUBMISSIONS_URL
+          if (!getUrl) {
+            console.error('get-submissions URL not configured')
+            setReviewNotice('Submission listing endpoint not configured.')
+            return
+          }
+
+          // Ensure auth.currentUser available
+          if (!auth?.currentUser) {
+            console.log('subscribe: auth.currentUser not available yet')
+            setReviewNotice('Authentication not ready')
+            return
+          }
+
+          const idToken = await auth.currentUser.getIdToken()
+          console.log('get-submissions: calling Edge Function; uid=', auth.currentUser.uid, 'idTokenLength=', idToken?.length || 0)
+
+          const fetchResp = await fetch(getUrl, {
+            method: 'GET',
+            headers: {
+              Authorization: `Bearer ${idToken}`,
+            },
+          })
+
+          const fetchText = await fetchResp.text()
+          let fetchData = null
+          try { fetchData = JSON.parse(fetchText) } catch (e) { fetchData = fetchText }
+
+          if (!fetchResp.ok) {
+            console.error('get-submissions Edge Function error', fetchResp.status, fetchData)
+            res = { error: fetchData || true, data: [] }
+          } else {
+            res = { error: null, data: fetchData?.submissions || [] }
+          }
         } else {
           res = await supabase.from('submissions').select('*').order('submitted_at', { ascending: false })
         }

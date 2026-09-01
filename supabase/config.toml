@@ -1,2 +1,5 @@
 [functions.create-submission]
 verify_jwt = false
+
+[functions.get-submissions]
+verify_jwt = false
