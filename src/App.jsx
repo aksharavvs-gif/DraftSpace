@@ -187,6 +187,12 @@ function App() {
     let channel = null
     let mounted = true
 
+    // Wait for Firebase auth to resolve before attempting to list student submissions.
+    if (!authResolved) {
+      console.log('subscribe: delaying subscription until authResolved')
+      return undefined
+    }
+
     const mapRow = (row) => ({
       id: row.id,
       title: row.title,
