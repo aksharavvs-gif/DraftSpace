@@ -67,12 +67,12 @@ jobs:
             echo "VITE_SUBMIT_REVIEW_URL is EMPTY"
             exit 1
           fi
-      
+
           npm run build
-      
-            - name: Upload artifacts for GitHub Pages
-              uses: actions/upload-pages-artifact@v3
-              with:
+
+      - name: Upload artifacts for GitHub Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
           path: ./dist
 
   deploy:
