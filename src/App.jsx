@@ -140,6 +140,7 @@ function App() {
   // local reviewer password login removed; reviewers authorize via Edge Function
   const [reviewerLoggedIn, setReviewerLoggedIn] = useState(false)
   const [reviewerSelectedSubmissionId, setReviewerSelectedSubmissionId] = useState(null)
+  const [reviewerTab, setReviewerTab] = useState('awaiting')
   const [reviewerFeedback, setReviewerFeedback] = useState({
     overall: '',
     strengths: '',
@@ -1314,44 +1315,67 @@ function App() {
             </div>
 
             <div className="reviewer-grid">
-              <aside className="reviewer-list card">
-                <h3>Awaiting review</h3>
-                {submissions.filter((s) => s.reviewStatus === 'Awaiting review').length === 0 ? (
-                  <p className="flow-copy">No student drafts awaiting review.</p>
-                ) : (
-                  submissions
-                    .filter((s) => s.reviewStatus === 'Awaiting review')
-                    .map((item) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        className={`submission-item review-item ${reviewerSelectedSubmissionId === item.id ? 'selected' : ''}`}
-                        onClick={() => setReviewerSelectedSubmissionId(item.id)}
-                      >
-                        <strong>{item.title}</strong>
-                        <span>{item.reviewStatus}</span>
-                      </button>
-                    ))
-                )}
+              <aside className="reviewer-list card reviewer-sidebar">
+                <div className="review-tabs">
+                  <button type="button" className={`tab ${reviewerTab === 'awaiting' ? 'active' : ''}`} onClick={() => setReviewerTab('awaiting')}>
+                    Awaiting Reviews
+                  </button>
+                  <button type="button" className={`tab ${reviewerTab === 'completed' ? 'active' : ''}`} onClick={() => setReviewerTab('completed')}>
+                    Completed Reviews
+                  </button>
+                </div>
 
-                <h3 style={{ marginTop: '1rem' }}>Completed reviews</h3>
-                {submissions.filter((s) => s.reviewStatus === 'Feedback ready').length === 0 ? (
-                  <p className="flow-copy">No completed reviews yet.</p>
-                ) : (
-                  submissions
-                    .filter((s) => s.reviewStatus === 'Feedback ready')
-                    .map((item) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        className={`submission-item review-item ${reviewerSelectedSubmissionId === item.id ? 'selected' : ''}`}
-                        onClick={() => setReviewerSelectedSubmissionId(item.id)}
-                      >
-                        <strong>{item.title}</strong>
-                        <span>{item.reviewStatus}</span>
-                      </button>
-                    ))
-                )}
+                <div className={`submission-list awaiting ${reviewerTab === 'awaiting' ? 'visible' : 'hidden'}`}>
+                  {submissions.filter((s) => s.reviewStatus === 'Awaiting review').length === 0 ? (
+                    <p className="flow-copy">No student drafts awaiting review.</p>
+                  ) : (
+                    submissions
+                      .filter((s) => s.reviewStatus === 'Awaiting review')
+                      .map((item) => (
+                        <article
+                          key={item.id}
+                          role="button"
+                          tabIndex={0}
+                          className={`review-sub-card ${reviewerSelectedSubmissionId === item.id ? 'selected' : ''}`}
+                          onClick={() => setReviewerSelectedSubmissionId(item.id)}
+                        >
+                          <div className="sub-card-left">
+                            <strong className="sub-title">{item.title}</strong>
+                            <p className="tiny-note sub-meta">{item.submittedAt} · {item.writingType || ''}</p>
+                          </div>
+                          <div className="sub-card-right">
+                            <span className="status-pill">{item.reviewStatus}</span>
+                          </div>
+                        </article>
+                      ))
+                  )}
+                </div>
+
+                <div className={`submission-list completed ${reviewerTab === 'completed' ? 'visible' : 'hidden'}`}>
+                  {submissions.filter((s) => s.reviewStatus === 'Feedback ready').length === 0 ? (
+                    <p className="flow-copy">No completed reviews yet.</p>
+                  ) : (
+                    submissions
+                      .filter((s) => s.reviewStatus === 'Feedback ready')
+                      .map((item) => (
+                        <article
+                          key={item.id}
+                          role="button"
+                          tabIndex={0}
+                          className={`review-sub-card completed ${reviewerSelectedSubmissionId === item.id ? 'selected' : ''}`}
+                          onClick={() => setReviewerSelectedSubmissionId(item.id)}
+                        >
+                          <div className="sub-card-left">
+                            <strong className="sub-title">{item.title}</strong>
+                            <p className="tiny-note sub-meta">{item.submittedAt} · {item.writingType || ''}</p>
+                          </div>
+                          <div className="sub-card-right">
+                            <span className="status-pill ready">{item.reviewStatus}</span>
+                          </div>
+                        </article>
+                      ))
+                  )}
+                </div>
               </aside>
 
               <div className="reviewer-workspace card">

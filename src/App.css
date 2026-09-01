@@ -443,6 +443,63 @@
   gap: 18px;
 }
 
+/* Reviewer sidebar tabs and polished list */
+.reviewer-sidebar {
+  padding: 18px;
+}
+.review-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.tab {
+  flex: 1 1 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: transparent;
+  border: 1px solid var(--border);
+  font-weight: 700;
+  color: var(--text-h);
+  cursor: pointer;
+}
+.tab.active {
+  background: linear-gradient(135deg, var(--accent), #cbb8ff);
+  color: white;
+  box-shadow: 0 8px 20px rgba(122, 92, 184, 0.12);
+  border-color: transparent;
+}
+.submission-list.hidden { display: none; }
+.submission-list.visible { display: block; }
+.review-sub-card {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  margin-top: 10px;
+  border-radius: 12px;
+  background: #ffffff;
+  border: 1px solid rgba(148, 126, 201, 0.08);
+  box-shadow: 0 8px 20px rgba(49, 38, 79, 0.04);
+  cursor: pointer;
+}
+.review-sub-card:hover { transform: translateY(-2px); transition: transform 140ms ease; }
+.review-sub-card.selected { border-color: #b698ff; background: #f8f4ff; }
+.review-sub-card.completed { opacity: 0.95; }
+.sub-card-left { display: flex; flex-direction: column; }
+.sub-title { font-size: 1rem; color: var(--text-h); margin-bottom: 4px; }
+.sub-meta { font-size: 0.9rem; color: var(--text); margin: 0; }
+.sub-card-right { display:flex; align-items:center; gap:8px; }
+
+/* Slightly more compact status pill for sidebar */
+.status-pill { padding: 6px 10px; border-radius: 999px; font-size: 0.86rem; }
+.status-pill.ready { background: #eefff6; border-color: #c8f0d7; color: #23714a; }
+
+@media (max-width: 960px) {
+  .reviewer-grid { grid-template-columns: 1fr; }
+  .submission-list .review-sub-card { margin-top: 12px; }
+}
+
 .review-item {
   width: 100%;
   justify-content: space-between;
