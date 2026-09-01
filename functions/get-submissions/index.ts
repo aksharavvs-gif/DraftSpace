@@ -78,34 +78,47 @@ async function verifyIdToken(idToken: string) {
 
 // Handler
 Deno.serve(async (req: Request) => {
-  try {
-    const origin = req.headers.get('origin') || ''
-    const allowedOriginHeader = ALLOWED_ORIGINS ? ALLOWED_ORIGINS : '*'
+  const origin = req.headers.get('origin') || ''
+  const allowedOriginHeader = ALLOWED_ORIGINS ? ALLOWED_ORIGINS : '*'
 
+  const makeJson = (obj: any, status = 200) => {
+    return new Response(JSON.stringify(obj), {
+      status,
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': allowedOriginHeader,
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+      },
+    })
+  }
+
+  try {
     if (req.method === 'OPTIONS') {
       return new Response(null, {
         status: 204,
         headers: {
           'Access-Control-Allow-Origin': allowedOriginHeader,
-          'Access-Control-Allow-Methods': 'GET, OPTIONS',
+          'Access-Control-Allow-Methods': 'POST, OPTIONS',
           'Access-Control-Allow-Headers': 'Authorization, Content-Type',
         },
       })
     }
 
-    if (req.method !== 'GET') {
-      return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': allowedOriginHeader } })
+    if (req.method !== 'POST') {
+      return makeJson({ error: 'Method not allowed' }, 405)
     }
 
+    // Expect JSON body optional; but token must be in Authorization header
     const authHeader = req.headers.get('authorization') || ''
     if (!authHeader.toLowerCase().startsWith('bearer ')) {
       console.log('get-submissions: missing or malformed authorization header')
-      return new Response(JSON.stringify({ error: 'Missing or malformed Authorization header' }), { status: 400, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': allowedOriginHeader } })
+      return makeJson({ error: 'Missing or malformed Authorization header' }, 400)
     }
 
     const idToken = authHeader.slice(7).trim()
     if (!idToken) {
-      return new Response(JSON.stringify({ error: 'Missing idToken' }), { status: 400, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': allowedOriginHeader } })
+      return makeJson({ error: 'Missing idToken' }, 400)
     }
 
     let payload: any
@@ -113,17 +126,17 @@ Deno.serve(async (req: Request) => {
       payload = await verifyIdToken(idToken)
     } catch (err: any) {
       console.log('get-submissions: firebase token verification failed', { name: err?.name || null, message: err?.message || null })
-      return new Response(JSON.stringify({ error: 'Invalid token' }), { status: 401, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': allowedOriginHeader } })
+      return makeJson({ error: 'Invalid token' }, 401)
     }
 
     const uid = payload?.sub
     if (!uid) {
-      return new Response(JSON.stringify({ error: 'Invalid token payload' }), { status: 400, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': allowedOriginHeader } })
+      return makeJson({ error: 'Invalid token payload' }, 400)
     }
 
     if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
       console.error('Supabase config missing in Edge Function')
-      return new Response(JSON.stringify({ error: 'Server misconfigured' }), { status: 500, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': allowedOriginHeader } })
+      return makeJson({ error: 'Server misconfigured' }, 500)
     }
 
     const url = `${SUPABASE_URL.replace(/\/$/, '')}/rest/v1/submissions?user_id=eq.${encodeURIComponent(uid)}&order=submitted_at.desc`
@@ -141,12 +154,12 @@ Deno.serve(async (req: Request) => {
 
     if (!res.ok) {
       console.error('Supabase query failed', res.status, text)
-      return new Response(JSON.stringify({ error: 'Upstream query failed', status: res.status, body: data }), { status: 502, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': allowedOriginHeader } })
+      return makeJson({ error: 'Upstream query failed', status: res.status, body: data }, 502)
     }
 
-    return new Response(JSON.stringify({ submissions: data }), { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': allowedOriginHeader } })
+    return makeJson({ submissions: data }, 200)
   } catch (err) {
     console.error('Unexpected error in get-submissions', err)
-    return new Response(JSON.stringify({ error: 'Internal error' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+    return makeJson({ error: 'Internal error' }, 500)
   }
 })

@@ -246,10 +246,12 @@ function App() {
           console.log('get-submissions: calling Edge Function; uid=', auth.currentUser.uid, 'idTokenLength=', idToken?.length || 0)
 
           const fetchResp = await fetch(getUrl, {
-            method: 'GET',
+            method: 'POST',
             headers: {
+              'Content-Type': 'application/json',
               Authorization: `Bearer ${idToken}`,
             },
+            body: JSON.stringify({}),
           })
 
           const fetchText = await fetchResp.text()
