@@ -157,7 +157,67 @@ Deno.serve(async (req: Request) => {
       return makeJson({ error: 'Upstream query failed', status: res.status, body: data }, 502)
     }
 
-    return makeJson({ submissions: data }, 200)
+    // data is an array of submissions. Attach any matching review rows so
+    // the frontend can display reviewer feedback (overall, strengths, areas, voice, next)
+    try {
+      const submissions = Array.isArray(data) ? data : []
+      const ids = submissions.map((s) => s.id).filter(Boolean)
+
+      if (ids.length === 0) {
+        return makeJson({ submissions }, 200)
+      }
+
+      const encodedIds = ids.map((id) => encodeURIComponent(id)).join(',')
+      const reviewsUrl = `${SUPABASE_URL.replace(/\/$/, '')}/rest/v1/reviews?submission_id=in.(${encodedIds})`
+      const reviewsRes = await fetch(reviewsUrl, {
+        method: 'GET',
+        headers: {
+          apikey: SUPABASE_SERVICE_ROLE_KEY,
+          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        },
+      })
+
+      const reviewsText = await reviewsRes.text()
+      let reviewsData: any = null
+      try { reviewsData = JSON.parse(reviewsText) } catch (e) { reviewsData = reviewsText }
+
+      if (!reviewsRes.ok) {
+        console.error('Supabase reviews query failed', reviewsRes.status, reviewsText)
+        // Fall back to returning submissions without embedded feedback
+        return makeJson({ submissions }, 200)
+      }
+
+      const reviews = Array.isArray(reviewsData) ? reviewsData : []
+      const reviewsBySubmission: Record<string, any> = {}
+      for (const r of reviews) {
+        if (!r || !r.submission_id) continue
+        reviewsBySubmission[String(r.submission_id)] = r
+      }
+
+      // Merge review fields into each submission's `feedback` property if not already present
+      const merged = submissions.map((s) => {
+        const review = reviewsBySubmission[String(s.id)]
+        const feedbackFromReview = review
+          ? {
+              overall: review.overall || null,
+              strengths: review.strengths || null,
+              areas: review.areas || null,
+              voice: review.voice || null,
+              next: review.next || null,
+            }
+          : null
+
+        return {
+          ...s,
+          feedback: s.feedback || feedbackFromReview,
+        }
+      })
+
+      return makeJson({ submissions: merged }, 200)
+    } catch (err) {
+      console.error('Error merging reviews into submissions', err)
+      return makeJson({ submissions: data }, 200)
+    }
   } catch (err) {
     console.error('Unexpected error in get-submissions', err)
     return makeJson({ error: 'Internal error' }, 500)
