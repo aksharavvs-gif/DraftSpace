@@ -928,9 +928,10 @@ function App() {
                 <p className="eyebrow">Why DraftSpace exists</p>
                 <h2>Students need readers, not just corrections.</h2>
                 <p>
-                  Teachers are stretched thin, and AI tools can clean up grammar while
-                  quietly removing personality. DraftSpace is built for the kind of feedback
-                  that helps a writer feel more certain about their own voice.
+                  Teachers are stretched thin, and while AI tools can clean up grammar, they
+                  can remove personality in the process. DraftSpace is built to provide feedback
+                  that helps a writer feel more certain about their work and voice, with genuine feedback
+                  from a human to another human.
                 </p>
               </div>
               <div className="card card-soft">
