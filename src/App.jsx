@@ -1557,7 +1557,6 @@ function App() {
         <div>
           <strong>Explore</strong>
           <a href="#why">Why it exists</a>
-          <a href="#preview">Product preview</a>
         </div>
         <p className="footer-note">Great writing grows through conversation.</p>
       </footer>
