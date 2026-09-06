@@ -1420,6 +1420,10 @@ function App() {
                         <h4>Student draft</h4>
                         <p>{reviewerSelectedSubmission.draft}</p>
                       </div>
+                      <div className="card card-soft">
+                        <h4>Additional Concerns</h4>
+                        <p>{(reviewerSelectedSubmission.context && String(reviewerSelectedSubmission.context).trim()) ? reviewerSelectedSubmission.context : 'None provided'}</p>
+                      </div>
                           {reviewerSelectedSubmission.reviewStatus === 'Feedback ready' ? (
                             <div className="feedback-readonly">
                               <h4>Reviewer feedback (submitted)</h4>
