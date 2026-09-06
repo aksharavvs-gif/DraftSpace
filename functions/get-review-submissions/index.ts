@@ -133,7 +133,45 @@ Deno.serve(async (req: Request) => {
     }
 
     const submissions = await res.json()
-    return makeJson({ submissions }, 200)
+
+    try {
+      const subs = Array.isArray(submissions) ? submissions : []
+      const ids = subs.map((s) => s.id).filter(Boolean)
+      if (ids.length === 0) return makeJson({ submissions: subs }, 200)
+
+      const encodedIds = ids.map((id) => encodeURIComponent(id)).join(',')
+      // Only fetch reviews that belong to this reviewer (reviewer_uid = uid)
+      const reviewsUrl = `${SUPABASE_URL.replace(/\/$/, '')}/rest/v1/reviews?submission_id=in.(${encodedIds})&reviewer_uid=eq.${encodeURIComponent(uid)}`
+      const reviewsRes = await fetch(reviewsUrl, { method: 'GET', headers: { apikey: SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`, Accept: 'application/json' } })
+
+      if (!reviewsRes.ok) {
+        console.error('get-review-submissions: reviews query failed', await reviewsRes.text())
+        return makeJson({ submissions: subs }, 200)
+      }
+
+      const reviews = await reviewsRes.json()
+      const reviewsBySubmission: Record<string, any> = {}
+      for (const r of Array.isArray(reviews) ? reviews : []) {
+        if (!r || !r.submission_id) continue
+        reviewsBySubmission[String(r.submission_id)] = r
+      }
+
+      const merged = subs.map((s) => ({
+        ...s,
+        feedback: s.feedback || (reviewsBySubmission[String(s.id)] ? {
+          overall: reviewsBySubmission[String(s.id)].overall || null,
+          strengths: reviewsBySubmission[String(s.id)].strengths || null,
+          areas: reviewsBySubmission[String(s.id)].areas || null,
+          voice: reviewsBySubmission[String(s.id)].voice || null,
+          next: reviewsBySubmission[String(s.id)].next || null,
+        } : null),
+      }))
+
+      return makeJson({ submissions: merged }, 200)
+    } catch (err) {
+      console.error('Error merging reviews for reviewer:', err)
+      return makeJson({ submissions: submissions }, 200)
+    }
   } catch (err) {
     console.error('Unexpected error in get-review-submissions', err)
     return makeJson({ error: 'Internal error' }, 500)
