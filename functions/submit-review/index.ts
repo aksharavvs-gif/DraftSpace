@@ -137,19 +137,39 @@ Deno.serve(async (req: Request) => {
       voice: body?.voice || null,
       next: body?.next || null,
     }
+      // Prevent overwriting an existing completed review: check for an existing
+      // review row for this submission_id and reject updates if one exists.
+      try {
+        const checkReviewsUrl = `${SUPABASE_URL.replace(/\/$/, '')}/rest/v1/reviews?submission_id=eq.${encodeURIComponent(submissionId)}`
+        const checkRes = await fetch(checkReviewsUrl, { method: 'GET', headers: { apikey: SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` } })
+        const checkText = await checkRes.text()
+        let checkData: any = null
+        try { checkData = JSON.parse(checkText) } catch (e) { checkData = checkText }
+        if (!checkRes.ok) {
+          console.error('submit-review: reviews lookup failed', checkRes.status, checkText)
+          return makeJson({ error: 'Upstream error' }, 502)
+        }
 
-    // Upsert into reviews table
-    const upsertUrl = `${SUPABASE_URL.replace(/\/$/, '')}/rest/v1/reviews?on_conflict=submission_id&select=*
-`
-    const upsertRes = await fetch(upsertUrl, { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`, Prefer: 'return=representation' }, body: JSON.stringify([reviewRow]) })
+        if (Array.isArray(checkData) && checkData.length > 0) {
+          // A review already exists for this submission; reject further edits.
+          return makeJson({ error: 'Review already submitted and cannot be modified' }, 409)
+        }
+      } catch (err) {
+        console.error('submit-review: error checking existing reviews', err)
+        return makeJson({ error: 'Internal error' }, 500)
+      }
 
-    const upsertText = await upsertRes.text()
-    let upsertData: any = null
-    try { upsertData = JSON.parse(upsertText) } catch (e) { upsertData = upsertText }
-    if (!upsertRes.ok) {
-      console.error('submit-review: upsert review failed', upsertRes.status, upsertText)
-      return makeJson({ error: 'Upstream error', details: upsertData }, 502)
-    }
+      // Insert new review into reviews table (do not overwrite existing rows)
+      const insertUrl = `${SUPABASE_URL.replace(/\/$/, '')}/rest/v1/reviews`
+      const insertRes = await fetch(insertUrl, { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`, Prefer: 'return=representation' }, body: JSON.stringify([reviewRow]) })
+
+      const insertText = await insertRes.text()
+      let insertData: any = null
+      try { insertData = JSON.parse(insertText) } catch (e) { insertData = insertText }
+      if (!insertRes.ok) {
+        console.error('submit-review: insert review failed', insertRes.status, insertText)
+        return makeJson({ error: 'Upstream error', details: insertData }, 502)
+      }
 
     // Prepare submission update
     const submissionUpdate: any = {

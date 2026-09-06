@@ -359,12 +359,48 @@ function App() {
       return undefined
     }
 
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       // mark that auth has been resolved and expose UID
       setAuthUid(user?.uid ?? null)
       setAuthResolved(true)
 
       if (!user) return
+
+      // If someone is signed in, check whether they are an approved reviewer
+      // via the secure Edge Function. If so, treat the session as a reviewer
+      // session and avoid routing them into the student flow.
+      const verifyUrl = import.meta.env.VITE_VERIFY_REVIEWER_URL
+      if (verifyUrl) {
+        try {
+          const idToken = await user.getIdToken()
+          const resp = await fetch(verifyUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ idToken }),
+          })
+
+          const text = await resp.text()
+          let data = null
+          try { data = JSON.parse(text) } catch (e) { data = text }
+
+          if (resp.ok && data?.isReviewer) {
+            // Treat this authenticated user as reviewer
+            setAuthContext('reviewer')
+            setReviewerLoggedIn(true)
+            const reviewerEmail = (user.email || '').toLowerCase()
+            setProfile((current) => ({ ...current, name: user.displayName?.split(' ')[0] || current.name, email: reviewerEmail || current.email }))
+            setReviewerSelectedSubmissionId(submissions[0]?.id ?? null)
+            setScreen('reviewer-dashboard')
+            setReviewNotice('')
+            return
+          }
+        } catch (err) {
+          // If verification fails, fall back to the student flow below.
+          console.log('Reviewer verification during auth state change failed', err)
+        }
+      }
+
+      // Student flow (only if not a reviewer)
       if (authContext === 'reviewer') return
 
       const normalizedEmail = user.email?.toLowerCase() || ''
@@ -387,6 +423,40 @@ function App() {
 
     return unsubscribe
   }, [auth, authContext])
+
+  // Ensure the reviewerFeedback state mirrors the currently selected submission
+  // so completed reviews show the stored content and pending reviews start empty.
+  useEffect(() => {
+    if (!reviewerSelectedSubmission) {
+      setReviewerFeedback({ overall: '', strengths: '', areas: '', voice: '', next: '' })
+      return
+    }
+
+    const fb = reviewerSelectedSubmission.feedback || {}
+    setReviewerFeedback({
+      overall: fb.overall || '',
+      strengths: fb.strengths || '',
+      areas: fb.areas || '',
+      voice: fb.voice || '',
+      next: fb.next || '',
+    })
+  }, [reviewerSelectedSubmissionId, reviewerSelectedSubmission])
+
+  // Proper reviewer sign-out: fully sign out of Firebase and clear reviewer state
+  const handleReviewerSignOut = async () => {
+    try {
+      if (auth) await signOut(auth)
+    } catch (err) {
+      console.error('Error signing out:', err)
+    }
+    setReviewerLoggedIn(false)
+    setReviewerSelectedSubmissionId(null)
+    setReviewerFeedback({ overall: '', strengths: '', areas: '', voice: '', next: '' })
+    setAuthContext('student')
+    setScreen('landing')
+    setReviewNotice('')
+    try { if (supabase && typeof supabase.removeAllChannels === 'function') supabase.removeAllChannels() } catch (e) { /* ignore */ }
+  }
 
   // If a reviewer signs in and no submission is selected yet, pick the newest one.
   useEffect(() => {
@@ -1305,7 +1375,7 @@ function App() {
                 </p>
               </div>
               <div className="reviewer-actions">
-                <button type="button" className="button secondary" onClick={() => setScreen('reviewer-login')}>
+                <button type="button" className="button secondary" onClick={handleReviewerSignOut}>
                   Sign out
                 </button>
                 <button type="button" className="button primary" onClick={() => setScreen('reviewer-dashboard')}>
@@ -1397,57 +1467,83 @@ function App() {
                         <h4>Student draft</h4>
                         <p>{reviewerSelectedSubmission.draft}</p>
                       </div>
-                      <div className="feedback-form">
-                        <label className="field">
-                          <span>Overall impression</span>
-                          <textarea
-                            rows="3"
-                            value={reviewerFeedback.overall}
-                            onChange={(event) => setReviewerFeedback((current) => ({ ...current, overall: event.target.value }))}
-                            placeholder="What stood out?"
-                          />
-                        </label>
-                        <label className="field">
-                          <span>Strengths</span>
-                          <textarea
-                            rows="3"
-                            value={reviewerFeedback.strengths}
-                            onChange={(event) => setReviewerFeedback((current) => ({ ...current, strengths: event.target.value }))}
-                            placeholder="Name the places where the voice feels especially alive."
-                          />
-                        </label>
-                        <label className="field">
-                          <span>Areas to improve</span>
-                          <textarea
-                            rows="3"
-                            value={reviewerFeedback.areas}
-                            onChange={(event) => setReviewerFeedback((current) => ({ ...current, areas: event.target.value }))}
-                            placeholder="Suggest one or two thoughtful next steps."
-                          />
-                        </label>
-                        <label className="field">
-                          <span>Your voice section</span>
-                          <textarea
-                            rows="3"
-                            value={reviewerFeedback.voice}
-                            onChange={(event) => setReviewerFeedback((current) => ({ ...current, voice: event.target.value }))}
-                            placeholder="Call out a moment that feels unmistakably the student’s."
-                          />
-                        </label>
-                        <label className="field">
-                          <span>Next steps</span>
-                          <textarea
-                            rows="3"
-                            value={reviewerFeedback.next}
-                            onChange={(event) => setReviewerFeedback((current) => ({ ...current, next: event.target.value }))}
-                            placeholder="Ask one or two guiding questions."
-                          />
-                        </label>
-                        <button type="button" className="button primary" onClick={sendReviewerFeedback}>
-                          Send feedback
-                        </button>
-                        {feedbackSubmittedMessage && <p className="tiny-note">{feedbackSubmittedMessage}</p>}
-                      </div>
+                          {reviewerSelectedSubmission.reviewStatus === 'Feedback ready' ? (
+                            <div className="feedback-readonly">
+                              <h4>Reviewer feedback (submitted)</h4>
+                              <div className="read-block">
+                                <h5>Overall impression</h5>
+                                <p>{reviewerSelectedSubmission.feedback?.overall || reviewerFeedback.overall || '—'}</p>
+                              </div>
+                              <div className="read-block">
+                                <h5>Strengths</h5>
+                                <p>{reviewerSelectedSubmission.feedback?.strengths || reviewerFeedback.strengths || '—'}</p>
+                              </div>
+                              <div className="read-block">
+                                <h5>Areas to improve</h5>
+                                <p>{reviewerSelectedSubmission.feedback?.areas || reviewerFeedback.areas || '—'}</p>
+                              </div>
+                              <div className="read-block">
+                                <h5>Your voice section</h5>
+                                <p>{reviewerSelectedSubmission.feedback?.voice || reviewerFeedback.voice || '—'}</p>
+                              </div>
+                              <div className="read-block">
+                                <h5>Next steps</h5>
+                                <p>{reviewerSelectedSubmission.feedback?.next || reviewerFeedback.next || '—'}</p>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="feedback-form">
+                              <label className="field">
+                                <span>Overall impression</span>
+                                <textarea
+                                  rows="3"
+                                  value={reviewerFeedback.overall}
+                                  onChange={(event) => setReviewerFeedback((current) => ({ ...current, overall: event.target.value }))}
+                                  placeholder="What stood out?"
+                                />
+                              </label>
+                              <label className="field">
+                                <span>Strengths</span>
+                                <textarea
+                                  rows="3"
+                                  value={reviewerFeedback.strengths}
+                                  onChange={(event) => setReviewerFeedback((current) => ({ ...current, strengths: event.target.value }))}
+                                  placeholder="Name the places where the voice feels especially alive."
+                                />
+                              </label>
+                              <label className="field">
+                                <span>Areas to improve</span>
+                                <textarea
+                                  rows="3"
+                                  value={reviewerFeedback.areas}
+                                  onChange={(event) => setReviewerFeedback((current) => ({ ...current, areas: event.target.value }))}
+                                  placeholder="Suggest one or two thoughtful next steps."
+                                />
+                              </label>
+                              <label className="field">
+                                <span>Your voice section</span>
+                                <textarea
+                                  rows="3"
+                                  value={reviewerFeedback.voice}
+                                  onChange={(event) => setReviewerFeedback((current) => ({ ...current, voice: event.target.value }))}
+                                  placeholder="Call out a moment that feels unmistakably the student’s."
+                                />
+                              </label>
+                              <label className="field">
+                                <span>Next steps</span>
+                                <textarea
+                                  rows="3"
+                                  value={reviewerFeedback.next}
+                                  onChange={(event) => setReviewerFeedback((current) => ({ ...current, next: event.target.value }))}
+                                  placeholder="Ask one or two guiding questions."
+                                />
+                              </label>
+                              <button type="button" className="button primary" onClick={sendReviewerFeedback}>
+                                Send feedback
+                              </button>
+                              {feedbackSubmittedMessage && <p className="tiny-note">{feedbackSubmittedMessage}</p>}
+                            </div>
+                          )}
                     </div>
                   </>
                 ) : (
