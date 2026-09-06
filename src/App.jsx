@@ -1552,7 +1552,7 @@ function App() {
         </div>
         <div>
           <strong>Contact</strong>
-          <a href="mailto:hello@draftspace.studio">hello@draftspace.studio</a>
+          <a href="mailto:hello@draftspace.studio">draftspacesupport@gmail.com</a>
         </div>
         <div>
           <strong>Explore</strong>
