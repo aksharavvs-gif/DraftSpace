@@ -153,8 +153,6 @@ function App() {
     { id: 2, from: 'reviewer', text: 'Absolutely — I can help you shape that with a few questions.' },
   ])
   const [chatDraft, setChatDraft] = useState('')
-  const [questionDraft, setQuestionDraft] = useState('')
-  const [questionOpen, setQuestionOpen] = useState(false)
   const [reviewNotice, setReviewNotice] = useState('')
   const [authMessage, setAuthMessage] = useState('')
   const [feedbackSubmittedMessage, setFeedbackSubmittedMessage] = useState('')
@@ -532,7 +530,6 @@ function App() {
 
   const goToDashboard = () => {
     setScreen('dashboard')
-    setQuestionOpen(false)
   }
 
   const handleWizardNext = () => {
@@ -864,35 +861,7 @@ function App() {
     setChatDraft('')
   }
 
-  const sendQuestion = (event) => {
-    event.preventDefault()
-    if (!selectedSubmission || !questionDraft.trim()) return
-    const persistQuestion = async () => {
-      const SUPABASE_CONFIGURED = Boolean(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY)
-      if (!SUPABASE_CONFIGURED) {
-        setReviewNotice('Unable to send your question: Supabase not configured.')
-        return
-      }
-
-      try {
-        const getRes = await supabase.from('submissions').select('question_replies').eq('id', selectedSubmission.id).single()
-        if (getRes.error) throw getRes.error
-        const current = getRes.data?.question_replies || []
-        const reply = { id: Date.now(), text: questionDraft }
-        const newReplies = [...current, reply]
-        const updateRes = await supabase.from('submissions').update({ question_replies: newReplies }).eq('id', selectedSubmission.id)
-        if (updateRes.error) throw updateRes.error
-        setQuestionDraft('')
-        setQuestionOpen(false)
-        setReviewNotice('Your question has been shared with the reviewer.')
-      } catch (err) {
-        console.error('Error saving question reply:', err)
-        setReviewNotice('Unable to send your question. Please try again.')
-      }
-    }
-
-    persistQuestion()
-  }
+  // Question feature removed: live chat will replace this in a future change.
 
   return (
     <div className="page-shell">
@@ -1322,22 +1291,6 @@ function App() {
               </div>
               <div className="card card-soft">
                 <h3>Questions for your reviewer</h3>
-                <button type="button" className="button secondary full" onClick={() => setQuestionOpen((current) => !current)}>
-                  Any questions about the feedback?
-                </button>
-                {questionOpen && (
-                  <form className="stacked-form small" onSubmit={sendQuestion}>
-                    <textarea
-                      rows="4"
-                      value={questionDraft}
-                      onChange={(event) => setQuestionDraft(event.target.value)}
-                      placeholder="Ask a follow-up question..."
-                    />
-                    <button type="submit" className="button primary full">
-                      Send question
-                    </button>
-                  </form>
-                )}
                 {selectedSubmission.questionReplies?.length > 0 && (
                   <div className="comment-stack">
                     {selectedSubmission.questionReplies.map((reply) => (
