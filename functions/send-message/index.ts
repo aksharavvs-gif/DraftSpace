@@ -187,7 +187,7 @@ Deno.serve(async (req: Request) => {
     }
 
     const senderRole = reviewer ? 'reviewer' : 'student'
-    const senderName = typeof payload?.name === 'string' && payload.name.trim() ? payload.name.trim() : null
+    const senderName = typeof payload?.name === 'string' && payload.name.trim() ? payload.name.trim().split(/\s+/)[0] : null
     const row = {
       submission_id: submissionId,
       sender_uid: uid,

@@ -195,14 +195,20 @@ function App() {
     }).format(date)
   }
 
-  const resolveDisplayName = (value, fallback) => {
+  const resolveFirstName = (value, fallback) => {
     const candidate = typeof value === 'string' ? value.trim() : ''
-    return candidate || fallback
+    const firstName = candidate ? candidate.split(/\s+/)[0] : ''
+    return firstName || fallback
   }
 
-  const senderLabelFromMessage = (message) => {
-    const fallback = message?.sender_role === 'reviewer' ? 'Reviewer' : 'Student'
-    return resolveDisplayName(message?.sender_name || message?.senderName, fallback)
+  const senderLabelFromMessage = (message, isOwnMessage = false) => {
+    if (isOwnMessage && authContext === 'reviewer') return 'Reviewer'
+    if (isOwnMessage && authContext === 'student') {
+      return resolveFirstName(auth?.currentUser?.displayName || profile.name, 'Student')
+    }
+
+    if (message?.sender_role === 'reviewer') return 'Reviewer'
+    return resolveFirstName(message?.sender_name || message?.senderName, 'Student')
   }
 
   const toggleSelection = (list, value) =>
@@ -294,7 +300,7 @@ function App() {
     const optimisticMessage = {
       id: `optimistic-${Date.now()}`,
       from: authContext === 'reviewer' ? 'reviewer' : 'student',
-      sender_name: resolveDisplayName(auth?.currentUser?.displayName || profile.name, authContext === 'reviewer' ? 'Reviewer' : 'Student'),
+      sender_name: resolveFirstName(auth?.currentUser?.displayName || profile.name, authContext === 'reviewer' ? 'Reviewer' : 'Student'),
       text: chatDraft.trim(),
       createdAt: new Date().toISOString(),
     }
@@ -1699,9 +1705,7 @@ function App() {
             <div className="chat-window">
               {orderedChatMessages.map((message) => {
                 const isOwnMessage = message.from === authContext
-                const senderName = isOwnMessage
-                  ? resolveDisplayName(auth?.currentUser?.displayName || profile.name, message.from === 'reviewer' ? 'Reviewer' : 'Student')
-                  : senderLabelFromMessage(message)
+                const senderName = senderLabelFromMessage(message, isOwnMessage)
                 return (
                   <div key={message.id} className={`chat-row ${isOwnMessage ? 'own' : 'other'}`}>
                     <div className={`chat-bubble ${isOwnMessage ? 'mine' : 'theirs'}`}>
@@ -1749,9 +1753,7 @@ function App() {
                 ) : (
                   orderedChatMessages.map((message) => {
                     const isOwnMessage = message.from === authContext
-                    const senderName = isOwnMessage
-                      ? resolveDisplayName(auth?.currentUser?.displayName || profile.name, message.from === 'reviewer' ? 'Reviewer' : 'Student')
-                      : senderLabelFromMessage(message)
+                    const senderName = senderLabelFromMessage(message, isOwnMessage)
                     return (
                       <div key={message.id} className={`chat-row ${isOwnMessage ? 'own' : 'other'}`}>
                         <div className={`chat-bubble ${isOwnMessage ? 'mine' : 'theirs'}`}>
