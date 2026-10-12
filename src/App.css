@@ -526,6 +526,34 @@
   padding-right: 4px;
 }
 
+.chat-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(17, 18, 28, 0.52);
+  display: grid;
+  place-items: center;
+  z-index: 40;
+  padding: 20px;
+}
+
+.chat-modal {
+  width: min(560px, 100%);
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  box-shadow: 0 22px 60px rgba(37, 25, 67, 0.22);
+  padding: 22px;
+}
+
+.chat-modal-header {
+  margin-bottom: 16px;
+}
+
+.error-note {
+  color: #8b1e3f;
+  margin-bottom: 10px;
+}
+
 .chat-bubble {
   max-width: 80%;
   padding: 10px 12px;

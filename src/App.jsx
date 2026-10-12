@@ -148,11 +148,12 @@ function App() {
     voice: '',
     next: '',
   })
-  const [chatMessages, setChatMessages] = useState([
-    { id: 1, from: 'student', text: 'I’m wondering whether the ending lands emotionally.' },
-    { id: 2, from: 'reviewer', text: 'Absolutely — I can help you shape that with a few questions.' },
-  ])
+  const [chatMessages, setChatMessages] = useState([])
   const [chatDraft, setChatDraft] = useState('')
+  const [chatModalOpen, setChatModalOpen] = useState(false)
+  const [chatThreadSubmissionId, setChatThreadSubmissionId] = useState(null)
+  const [chatLoading, setChatLoading] = useState(false)
+  const [chatError, setChatError] = useState('')
   const [reviewNotice, setReviewNotice] = useState('')
   const [authMessage, setAuthMessage] = useState('')
   const [feedbackSubmittedMessage, setFeedbackSubmittedMessage] = useState('')
@@ -168,8 +169,140 @@ function App() {
     [reviewerSelectedSubmissionId, submissions],
   )
 
+  const activeChatSubmission = useMemo(
+    () => submissions.find((item) => item.id === chatThreadSubmissionId) ?? null,
+    [chatThreadSubmissionId, submissions],
+  )
+
   const toggleSelection = (list, value) =>
     list.includes(value) ? list.filter((item) => item !== value) : [...list, value]
+
+  const loadChatMessages = async (submissionId) => {
+    if (!submissionId) return
+
+    const getUrl = import.meta.env.VITE_GET_MESSAGES_URL
+    if (!getUrl) {
+      setChatError('Message retrieval endpoint not configured. Add VITE_GET_MESSAGES_URL to your environment.')
+      return
+    }
+
+    if (!auth?.currentUser) {
+      setChatError('Authentication not ready.')
+      return
+    }
+
+    setChatLoading(true)
+    setChatError('')
+
+    try {
+      const idToken = await auth.currentUser.getIdToken()
+      const response = await fetch(getUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ submission_id: submissionId }),
+      })
+
+      const text = await response.text()
+      let payload = null
+      try {
+        payload = JSON.parse(text)
+      } catch (e) {
+        payload = { message: text }
+      }
+
+      if (!response.ok) {
+        throw new Error(payload?.error || 'Unable to load messages.')
+      }
+
+      const rows = Array.isArray(payload?.messages) ? payload.messages : []
+      setChatMessages(rows.map((row) => ({
+        id: row.id || `${row.submission_id}-${row.created_at || Date.now()}`,
+        from: row.sender_role === 'reviewer' ? 'reviewer' : 'student',
+        text: row.message || '',
+        createdAt: row.created_at || null,
+      })))
+    } catch (err) {
+      console.error('Unable to load messages:', err)
+      setChatMessages([])
+      setChatError(err?.message || 'Unable to load messages.')
+    } finally {
+      setChatLoading(false)
+    }
+  }
+
+  const openChatForSubmission = async (submissionId) => {
+    setChatThreadSubmissionId(submissionId)
+    setChatModalOpen(true)
+    setChatDraft('')
+    setChatError('')
+    await loadChatMessages(submissionId)
+  }
+
+  const sendChatMessage = async (event) => {
+    event.preventDefault()
+    if (!chatDraft.trim() || !chatThreadSubmissionId) return
+
+    const sendUrl = import.meta.env.VITE_SEND_MESSAGE_URL
+    if (!sendUrl) {
+      setChatError('Message sending endpoint not configured. Add VITE_SEND_MESSAGE_URL to your environment.')
+      return
+    }
+
+    if (!auth?.currentUser) {
+      setChatError('Authentication not ready.')
+      return
+    }
+
+    setChatLoading(true)
+    setChatError('')
+
+    try {
+      const idToken = await auth.currentUser.getIdToken()
+      const response = await fetch(sendUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          submission_id: chatThreadSubmissionId,
+          message: chatDraft.trim(),
+        }),
+      })
+
+      const text = await response.text()
+      let payload = null
+      try {
+        payload = JSON.parse(text)
+      } catch (e) {
+        payload = { message: text }
+      }
+
+      if (!response.ok) {
+        throw new Error(payload?.error || 'Unable to send message.')
+      }
+
+      const saved = payload?.message || null
+      if (saved) {
+        setChatMessages((current) => [...current, {
+          id: saved.id || `${saved.submission_id}-${saved.created_at || Date.now()}`,
+          from: saved.sender_role === 'reviewer' ? 'reviewer' : 'student',
+          text: saved.message || '',
+          createdAt: saved.created_at || null,
+        }])
+      }
+
+      setChatDraft('')
+    } catch (err) {
+      console.error('Unable to send message:', err)
+      setChatError(err?.message || 'Unable to send message.')
+    } finally {
+      setChatLoading(false)
+    }
+  }
 
   useEffect(() => {
     // Submissions are stored only in Firestore; do not write them to localStorage.
@@ -854,15 +987,6 @@ function App() {
     persistFeedback()
   }
 
-  const sendChatMessage = (event) => {
-    event.preventDefault()
-    if (!chatDraft.trim()) return
-    setChatMessages((current) => [...current, { id: Date.now(), from: 'reviewer', text: chatDraft }])
-    setChatDraft('')
-  }
-
-  // Question feature removed: live chat will replace this in a future change.
-
   return (
     <div className="page-shell">
       <header className="topbar">
@@ -1291,16 +1415,15 @@ function App() {
                 <p>{selectedSubmission.feedback?.next ?? 'A few gentle questions to keep the conversation going.'}</p>
               </div>
               <div className="card card-soft">
-                <h3>Questions for your reviewer</h3>
-                {selectedSubmission.questionReplies?.length > 0 && (
-                  <div className="comment-stack">
-                    {selectedSubmission.questionReplies.map((reply) => (
-                      <article key={reply.id} className="comment-card">
-                        <p>{reply.text}</p>
-                      </article>
-                    ))}
-                  </div>
-                )}
+                <h3>Message your reviewer</h3>
+                <p>Ask a quick follow-up without leaving this page.</p>
+                <button
+                  type="button"
+                  className="button secondary"
+                  onClick={() => openChatForSubmission(selectedSubmission.id)}
+                >
+                  Message Your Reviewer
+                </button>
               </div>
             </div>
           </section>
@@ -1411,8 +1534,12 @@ function App() {
                         <h3>{reviewerSelectedSubmission.title}</h3>
                         <p className="tiny-note">Submitted {reviewerSelectedSubmission.submittedAt}</p>
                       </div>
-                      <button type="button" className="button secondary" onClick={() => setScreen('reviewer-chat')}>
-                        Open live chat
+                      <button
+                        type="button"
+                        className="button secondary"
+                        onClick={() => openChatForSubmission(reviewerSelectedSubmission.id)}
+                      >
+                        Message student
                       </button>
                     </div>
 
@@ -1541,6 +1668,49 @@ function App() {
               </button>
             </form>
           </section>
+        )}
+
+        {chatModalOpen && chatThreadSubmissionId && (
+          <div className="chat-modal-backdrop" onClick={() => setChatModalOpen(false)}>
+            <div className="chat-modal" onClick={(event) => event.stopPropagation()}>
+              <div className="feedback-header chat-modal-header">
+                <div>
+                  <p className="eyebrow">Submission conversation</p>
+                  <h2>{activeChatSubmission?.title || 'Message thread'}</h2>
+                </div>
+                <button type="button" className="button secondary" onClick={() => setChatModalOpen(false)}>
+                  Close
+                </button>
+              </div>
+
+              {chatError && <p className="tiny-note error-note">{chatError}</p>}
+
+              <div className="chat-window">
+                {chatLoading && chatMessages.length === 0 ? (
+                  <p className="tiny-note">Loading messages...</p>
+                ) : chatMessages.length === 0 ? (
+                  <p className="tiny-note">No messages yet. Start the conversation.</p>
+                ) : (
+                  chatMessages.map((message) => (
+                    <div key={message.id} className={`chat-bubble ${message.from === 'reviewer' ? 'reviewer' : 'student'}`}>
+                      {message.text}
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <form className="chat-form" onSubmit={sendChatMessage}>
+                <input
+                  value={chatDraft}
+                  onChange={(event) => setChatDraft(event.target.value)}
+                  placeholder={authContext === 'reviewer' ? 'Write a message to the student...' : 'Write a message to your reviewer...'}
+                />
+                <button type="submit" className="button primary" disabled={chatLoading || !chatDraft.trim()}>
+                  {chatLoading ? 'Sending...' : 'Send'}
+                </button>
+              </form>
+            </div>
+          </div>
         )}
         </div>
       </main>
