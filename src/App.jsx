@@ -174,6 +174,27 @@ function App() {
     [chatThreadSubmissionId, submissions],
   )
 
+  const orderedChatMessages = useMemo(
+    () => [...chatMessages].sort((a, b) => {
+      const left = a.createdAt ? new Date(a.createdAt).getTime() : 0
+      const right = b.createdAt ? new Date(b.createdAt).getTime() : 0
+      return left - right
+    }),
+    [chatMessages],
+  )
+
+  const formatChatTimestamp = (timestamp) => {
+    if (!timestamp) return ''
+
+    const date = new Date(timestamp)
+    if (Number.isNaN(date.getTime())) return ''
+
+    return new Intl.DateTimeFormat(undefined, {
+      hour: 'numeric',
+      minute: '2-digit',
+    }).format(date)
+  }
+
   const toggleSelection = (list, value) =>
     list.includes(value) ? list.filter((item) => item !== value) : [...list, value]
 
@@ -259,6 +280,16 @@ function App() {
     setChatLoading(true)
     setChatError('')
 
+    const optimisticMessage = {
+      id: `optimistic-${Date.now()}`,
+      from: authContext === 'reviewer' ? 'reviewer' : 'student',
+      text: chatDraft.trim(),
+      createdAt: new Date().toISOString(),
+    }
+
+    setChatMessages((current) => [...current, optimisticMessage])
+    setChatDraft('')
+
     try {
       const idToken = await auth.currentUser.getIdToken()
       const response = await fetch(sendUrl, {
@@ -269,7 +300,7 @@ function App() {
         },
         body: JSON.stringify({
           submission_id: chatThreadSubmissionId,
-          message: chatDraft.trim(),
+          message: optimisticMessage.text,
         }),
       })
 
@@ -287,15 +318,17 @@ function App() {
 
       const saved = payload?.message || null
       if (saved) {
-        setChatMessages((current) => [...current, {
-          id: saved.id || `${saved.submission_id}-${saved.created_at || Date.now()}`,
-          from: saved.sender_role === 'reviewer' ? 'reviewer' : 'student',
-          text: saved.message || '',
-          createdAt: saved.created_at || null,
-        }])
+        setChatMessages((current) => current.map((message) => (
+          message.id === optimisticMessage.id
+            ? {
+                id: saved.id || `${saved.submission_id}-${saved.created_at || Date.now()}`,
+                from: saved.sender_role === 'reviewer' ? 'reviewer' : 'student',
+                text: saved.message || '',
+                createdAt: saved.created_at || new Date().toISOString(),
+              }
+            : message
+        )))
       }
-
-      setChatDraft('')
     } catch (err) {
       console.error('Unable to send message:', err)
       setChatError(err?.message || 'Unable to send message.')
@@ -1651,11 +1684,18 @@ function App() {
               </button>
             </div>
             <div className="chat-window">
-              {chatMessages.map((message) => (
-                <div key={message.id} className={`chat-bubble ${message.from === 'reviewer' ? 'reviewer' : 'student'}`}>
-                  {message.text}
-                </div>
-              ))}
+              {orderedChatMessages.map((message) => {
+                const isOwnMessage = message.from === authContext
+                return (
+                  <div key={message.id} className={`chat-row ${isOwnMessage ? 'own' : 'other'}`}>
+                    <div className={`chat-bubble ${isOwnMessage ? 'mine' : 'theirs'}`}>
+                      <span className="chat-sender">{isOwnMessage ? 'You' : message.from === 'reviewer' ? 'Reviewer' : 'Student'}</span>
+                      <span className="chat-text">{message.text}</span>
+                      <span className="chat-time">{formatChatTimestamp(message.createdAt)}</span>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
             <form className="chat-form" onSubmit={sendChatMessage}>
               <input
@@ -1688,14 +1728,21 @@ function App() {
               <div className="chat-window">
                 {chatLoading && chatMessages.length === 0 ? (
                   <p className="tiny-note">Loading messages...</p>
-                ) : chatMessages.length === 0 ? (
+                ) : orderedChatMessages.length === 0 ? (
                   <p className="tiny-note">No messages yet. Start the conversation.</p>
                 ) : (
-                  chatMessages.map((message) => (
-                    <div key={message.id} className={`chat-bubble ${message.from === 'reviewer' ? 'reviewer' : 'student'}`}>
-                      {message.text}
-                    </div>
-                  ))
+                  orderedChatMessages.map((message) => {
+                    const isOwnMessage = message.from === authContext
+                    return (
+                      <div key={message.id} className={`chat-row ${isOwnMessage ? 'own' : 'other'}`}>
+                        <div className={`chat-bubble ${isOwnMessage ? 'mine' : 'theirs'}`}>
+                          <span className="chat-sender">{isOwnMessage ? 'You' : message.from === 'reviewer' ? 'Reviewer' : 'Student'}</span>
+                          <span className="chat-text">{message.text}</span>
+                          <span className="chat-time">{formatChatTimestamp(message.createdAt)}</span>
+                        </div>
+                      </div>
+                    )
+                  })
                 )}
               </div>
 

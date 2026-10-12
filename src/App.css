@@ -519,11 +519,28 @@
 }
 
 .chat-window {
-  display: grid;
-  gap: 10px;
-  max-height: 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 340px;
   overflow: auto;
-  padding-right: 4px;
+  padding: 12px 6px 12px 0;
+  background: linear-gradient(180deg, rgba(249, 245, 255, 0.8), rgba(255,255,255,0.72));
+  border: 1px solid rgba(156, 130, 214, 0.16);
+  border-radius: 20px;
+}
+
+.chat-row {
+  display: flex;
+  width: 100%;
+}
+
+.chat-row.own {
+  justify-content: flex-end;
+}
+
+.chat-row.other {
+  justify-content: flex-start;
 }
 
 .chat-modal-backdrop {
@@ -555,22 +572,45 @@
 }
 
 .chat-bubble {
-  max-width: 80%;
-  padding: 10px 12px;
-  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 78%;
+  padding: 10px 12px 9px;
+  border-radius: 18px;
   line-height: 1.4;
+  box-shadow: 0 8px 20px rgba(60, 39, 98, 0.06);
 }
 
-.chat-bubble.reviewer {
-  justify-self: end;
+.chat-bubble.mine {
   background: linear-gradient(135deg, var(--accent), #b698ff);
   color: white;
+  border-bottom-right-radius: 8px;
 }
 
-.chat-bubble.student {
-  justify-self: start;
-  background: #f2ebff;
+.chat-bubble.theirs {
+  background: #f3edff;
   color: var(--text-h);
+  border-bottom-left-radius: 8px;
+}
+
+.chat-sender {
+  font-size: 0.65rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 700;
+  opacity: 0.8;
+}
+
+.chat-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.chat-time {
+  align-self: flex-end;
+  font-size: 0.7rem;
+  opacity: 0.8;
 }
 
 .footer {
