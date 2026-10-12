@@ -187,15 +187,17 @@ Deno.serve(async (req: Request) => {
     }
 
     const senderRole = reviewer ? 'reviewer' : 'student'
+    const senderName = typeof payload?.name === 'string' && payload.name.trim() ? payload.name.trim() : null
     const row = {
       submission_id: submissionId,
       sender_uid: uid,
       sender_role: senderRole,
       message: messageText,
+      ...(senderName ? { sender_name: senderName } : {}),
     }
 
     const insertUrl = `${SUPABASE_URL.replace(/\/$/, '')}/rest/v1/messages`
-    const insertRes = await fetch(insertUrl, {
+    const firstAttempt = await fetch(insertUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -206,9 +208,33 @@ Deno.serve(async (req: Request) => {
       body: JSON.stringify([row]),
     })
 
-    const insertText = await insertRes.text()
     let insertData: any = null
+    let insertRes = firstAttempt
+    let insertText = await insertRes.text()
     try { insertData = JSON.parse(insertText) } catch (e) { insertData = insertText }
+
+    if (!insertRes.ok && senderName) {
+      const fallbackRow = {
+        submission_id: submissionId,
+        sender_uid: uid,
+        sender_role: senderRole,
+        message: messageText,
+      }
+
+      insertRes = await fetch(insertUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: SUPABASE_SERVICE_ROLE_KEY,
+          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          Prefer: 'return=representation',
+        },
+        body: JSON.stringify([fallbackRow]),
+      })
+
+      insertText = await insertRes.text()
+      try { insertData = JSON.parse(insertText) } catch (e) { insertData = insertText }
+    }
 
     if (!insertRes.ok) {
       console.error('send-message: insert failed', insertRes.status, insertText)

@@ -195,6 +195,16 @@ function App() {
     }).format(date)
   }
 
+  const resolveDisplayName = (value, fallback) => {
+    const candidate = typeof value === 'string' ? value.trim() : ''
+    return candidate || fallback
+  }
+
+  const senderLabelFromMessage = (message) => {
+    const fallback = message?.sender_role === 'reviewer' ? 'Reviewer' : 'Student'
+    return resolveDisplayName(message?.sender_name || message?.senderName, fallback)
+  }
+
   const toggleSelection = (list, value) =>
     list.includes(value) ? list.filter((item) => item !== value) : [...list, value]
 
@@ -242,6 +252,7 @@ function App() {
       setChatMessages(rows.map((row) => ({
         id: row.id || `${row.submission_id}-${row.created_at || Date.now()}`,
         from: row.sender_role === 'reviewer' ? 'reviewer' : 'student',
+        senderName: senderLabelFromMessage(row),
         text: row.message || '',
         createdAt: row.created_at || null,
       })))
@@ -283,6 +294,7 @@ function App() {
     const optimisticMessage = {
       id: `optimistic-${Date.now()}`,
       from: authContext === 'reviewer' ? 'reviewer' : 'student',
+      sender_name: resolveDisplayName(auth?.currentUser?.displayName || profile.name, authContext === 'reviewer' ? 'Reviewer' : 'Student'),
       text: chatDraft.trim(),
       createdAt: new Date().toISOString(),
     }
@@ -323,6 +335,7 @@ function App() {
             ? {
                 id: saved.id || `${saved.submission_id}-${saved.created_at || Date.now()}`,
                 from: saved.sender_role === 'reviewer' ? 'reviewer' : 'student',
+                senderName: senderLabelFromMessage(saved),
                 text: saved.message || '',
                 createdAt: saved.created_at || new Date().toISOString(),
               }
@@ -1686,10 +1699,13 @@ function App() {
             <div className="chat-window">
               {orderedChatMessages.map((message) => {
                 const isOwnMessage = message.from === authContext
+                const senderName = isOwnMessage
+                  ? resolveDisplayName(auth?.currentUser?.displayName || profile.name, message.from === 'reviewer' ? 'Reviewer' : 'Student')
+                  : senderLabelFromMessage(message)
                 return (
                   <div key={message.id} className={`chat-row ${isOwnMessage ? 'own' : 'other'}`}>
                     <div className={`chat-bubble ${isOwnMessage ? 'mine' : 'theirs'}`}>
-                      <span className="chat-sender">{isOwnMessage ? 'You' : message.from === 'reviewer' ? 'Reviewer' : 'Student'}</span>
+                      <span className="chat-sender">{senderName}</span>
                       <span className="chat-text">{message.text}</span>
                       <span className="chat-time">{formatChatTimestamp(message.createdAt)}</span>
                     </div>
@@ -1733,10 +1749,13 @@ function App() {
                 ) : (
                   orderedChatMessages.map((message) => {
                     const isOwnMessage = message.from === authContext
+                    const senderName = isOwnMessage
+                      ? resolveDisplayName(auth?.currentUser?.displayName || profile.name, message.from === 'reviewer' ? 'Reviewer' : 'Student')
+                      : senderLabelFromMessage(message)
                     return (
                       <div key={message.id} className={`chat-row ${isOwnMessage ? 'own' : 'other'}`}>
                         <div className={`chat-bubble ${isOwnMessage ? 'mine' : 'theirs'}`}>
-                          <span className="chat-sender">{isOwnMessage ? 'You' : message.from === 'reviewer' ? 'Reviewer' : 'Student'}</span>
+                          <span className="chat-sender">{senderName}</span>
                           <span className="chat-text">{message.text}</span>
                           <span className="chat-time">{formatChatTimestamp(message.createdAt)}</span>
                         </div>
