@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth'
 import { supabase } from './supabaseClient'
 import './App.css'
@@ -154,6 +154,10 @@ function App() {
   const [chatThreadSubmissionId, setChatThreadSubmissionId] = useState(null)
   const [chatLoading, setChatLoading] = useState(false)
   const [chatError, setChatError] = useState('')
+  const [notifications, setNotifications] = useState([])
+  const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const [notificationsLoading, setNotificationsLoading] = useState(false)
+  const [notificationsError, setNotificationsError] = useState('')
   const [reviewNotice, setReviewNotice] = useState('')
   const [authMessage, setAuthMessage] = useState('')
   const [feedbackSubmittedMessage, setFeedbackSubmittedMessage] = useState('')
@@ -172,6 +176,13 @@ function App() {
   const activeChatSubmission = useMemo(
     () => submissions.find((item) => item.id === chatThreadSubmissionId) ?? null,
     [chatThreadSubmissionId, submissions],
+  )
+
+  const notificationRef = useRef(null)
+
+  const unreadNotificationCount = useMemo(
+    () => notifications.filter((item) => !item.is_read).length,
+    [notifications],
   )
 
   const orderedChatMessages = useMemo(
@@ -193,6 +204,154 @@ function App() {
       hour: 'numeric',
       minute: '2-digit',
     }).format(date)
+  }
+
+  const formatNotificationTime = (timestamp) => {
+    if (!timestamp) return 'Just now'
+
+    const date = new Date(timestamp)
+    if (Number.isNaN(date.getTime())) return 'Just now'
+
+    const diffMs = date.getTime() - Date.now()
+    const diffMinutes = Math.round(diffMs / 60000)
+    const diffHours = Math.round(diffMs / 3600000)
+    const diffDays = Math.round(diffMs / 86400000)
+
+    if (Math.abs(diffMinutes) < 60) return `${Math.abs(diffMinutes) || 1} min ago`
+    if (Math.abs(diffHours) < 24) return `${Math.abs(diffHours) || 1} hr ago`
+    return `${Math.abs(diffDays) || 1} day ago`
+  }
+
+  const loadNotifications = async () => {
+    if (!auth?.currentUser) {
+      setNotifications([])
+      return
+    }
+
+    const getUrl = import.meta.env.VITE_GET_NOTIFICATIONS_URL
+    if (!getUrl) {
+      setNotifications([])
+      return
+    }
+
+    setNotificationsLoading(true)
+    setNotificationsError('')
+
+    try {
+      const idToken = await auth.currentUser.getIdToken()
+      const response = await fetch(getUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ action: 'list', limit: 30 }),
+      })
+
+      const text = await response.text()
+      let payload = null
+      try {
+        payload = JSON.parse(text)
+      } catch (e) {
+        payload = { message: text }
+      }
+
+      if (!response.ok) {
+        throw new Error(payload?.error || 'Unable to load notifications.')
+      }
+
+      setNotifications(Array.isArray(payload?.notifications) ? payload.notifications : [])
+    } catch (err) {
+      console.error('Unable to load notifications:', err)
+      setNotifications([])
+      setNotificationsError(err?.message || 'Unable to load notifications.')
+    } finally {
+      setNotificationsLoading(false)
+    }
+  }
+
+  const markNotificationAsRead = async (notificationId, options = {}) => {
+    const { silent = false, callback = null } = options
+    if (!notificationId || !auth?.currentUser) return
+
+    const getUrl = import.meta.env.VITE_GET_NOTIFICATIONS_URL
+    if (!getUrl) return
+
+    try {
+      const idToken = await auth.currentUser.getIdToken()
+      const response = await fetch(getUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ action: 'mark_read', notification_id: notificationId }),
+      })
+
+      if (!response.ok) {
+        const payloadText = await response.text()
+        let payload = null
+        try { payload = JSON.parse(payloadText) } catch (e) { payload = { message: payloadText } }
+        throw new Error(payload?.error || 'Unable to mark notification as read.')
+      }
+
+      setNotifications((current) => current.map((item) => (
+        item.id === notificationId ? { ...item, is_read: true } : item
+      )))
+
+      if (typeof callback === 'function') {
+        callback()
+      }
+    } catch (err) {
+      if (!silent) {
+        console.error('Unable to mark notification as read:', err)
+      }
+    }
+  }
+
+  const markAllNotificationsRead = async () => {
+    if (!auth?.currentUser) return
+
+    const getUrl = import.meta.env.VITE_GET_NOTIFICATIONS_URL
+    if (!getUrl) return
+
+    try {
+      const idToken = await auth.currentUser.getIdToken()
+      const response = await fetch(getUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ action: 'mark_all_read' }),
+      })
+
+      if (!response.ok) {
+        const payloadText = await response.text()
+        let payload = null
+        try { payload = JSON.parse(payloadText) } catch (e) { payload = { message: payloadText } }
+        throw new Error(payload?.error || 'Unable to mark notifications as read.')
+      }
+
+      setNotifications((current) => current.map((item) => ({ ...item, is_read: true })))
+    } catch (err) {
+      console.error('Unable to mark all notifications as read:', err)
+    }
+  }
+
+  const resolveNotificationTarget = async (notification) => {
+    if (!notification?.submission_id) return
+
+    const targetId = String(notification.submission_id)
+    setSelectedSubmissionId(targetId)
+    setReviewerSelectedSubmissionId(targetId)
+    setChatThreadSubmissionId(targetId)
+    setChatModalOpen(true)
+    setNotificationOpen(false)
+    setScreen(authContext === 'reviewer' ? 'reviewer-dashboard' : 'dashboard')
+
+    await loadChatMessages(targetId)
+    await markNotificationAsRead(notification.id, { silent: true })
   }
 
   const resolveFirstName = (value, fallback) => {
@@ -544,6 +703,7 @@ function App() {
   useEffect(() => {
     if (!auth) {
       setAuthMessage('Add your Firebase credentials to enable Google sign-in.')
+      setNotifications([])
       return undefined
     }
 
@@ -611,6 +771,26 @@ function App() {
 
     return unsubscribe
   }, [auth, authContext])
+
+  useEffect(() => {
+    if (!authResolved || !auth?.currentUser) {
+      setNotifications([])
+      return
+    }
+
+    loadNotifications()
+  }, [authResolved, authUid, authContext])
+
+  useEffect(() => {
+    const handlePointerDown = (event) => {
+      if (notificationRef.current && !notificationRef.current.contains(event.target)) {
+        setNotificationsOpen(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handlePointerDown)
+    return () => document.removeEventListener('mousedown', handlePointerDown)
+  }, [])
 
   // Ensure the reviewerFeedback state mirrors the currently selected submission
   // so completed reviews show the stored content and pending reviews start empty.
@@ -1058,6 +1238,72 @@ function App() {
             Reviewer access
           </button>
         </nav>
+
+        {auth?.currentUser && (
+          <div className="notification-wrapper" ref={notificationRef}>
+            <button
+              type="button"
+              className="notification-bell"
+              aria-label="Notifications"
+              onClick={async () => {
+                const nextState = !notificationsOpen
+                setNotificationsOpen(nextState)
+                if (nextState) {
+                  await loadNotifications()
+                }
+              }}
+            >
+              <span aria-hidden="true">🔔</span>
+              {unreadNotificationCount > 0 && (
+                <span className="notification-badge">
+                  {unreadNotificationCount > 9 ? '9+' : unreadNotificationCount}
+                </span>
+              )}
+            </button>
+
+            {notificationsOpen && (
+              <div className="notification-panel" role="dialog" aria-label="Notifications">
+                <div className="notification-panel-header">
+                  <h3>Notifications</h3>
+                  <button type="button" className="link-button" onClick={markAllNotificationsRead}>
+                    Mark all as read
+                  </button>
+                </div>
+
+                {notificationsLoading ? (
+                  <div className="notification-empty">Loading notifications…</div>
+                ) : notificationsError ? (
+                  <div className="notification-empty">{notificationsError}</div>
+                ) : notifications.length === 0 ? (
+                  <div className="notification-empty">You&apos;re all caught up.</div>
+                ) : (
+                  <div className="notification-list">
+                    {notifications.map((notification) => (
+                      <button
+                        key={notification.id}
+                        type="button"
+                        className={`notification-item ${notification.is_read ? 'read' : 'unread'}`}
+                        onClick={() => resolveNotificationTarget(notification)}
+                      >
+                        <div className="notification-item-topline">
+                          <strong>New message received</strong>
+                          {!notification.is_read && <span className="notification-dot" aria-label="Unread" />}
+                        </div>
+                        <p>
+                          {notification.sender_name ? `${notification.sender_name} sent a new note` : 'A new message is waiting for you.'}
+                        </p>
+                        <small>
+                          {notification.submission_name ? `On "${notification.submission_name}"` : 'View submission'}
+                        </small>
+                        <span className="notification-time">{formatNotificationTime(notification.created_at)}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </header>
 
       <main id="top">

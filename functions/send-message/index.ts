@@ -90,6 +90,112 @@ async function isReviewer(uid: string) {
   return Array.isArray(data) && data.length > 0
 }
 
+async function listReviewerUids() {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return []
+
+  const url = `${SUPABASE_URL.replace(/\/$/, '')}/rest/v1/reviewers?select=firebase_uid`
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: {
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      Accept: 'application/json',
+    },
+  })
+
+  if (!res.ok) {
+    console.error('send-message: reviewer list failed', await res.text())
+    return []
+  }
+
+  const data = await res.json()
+  if (!Array.isArray(data)) return []
+
+  return data
+    .map((row: any) => row?.firebase_uid)
+    .filter((value: any) => typeof value === 'string' && value.trim().length > 0)
+}
+
+async function createNotificationsForMessage({
+  submissionId,
+  messageId,
+  senderUid,
+  senderName,
+  submissionTitle,
+  recipientUids,
+}: {
+  submissionId: string
+  messageId: string
+  senderUid: string
+  senderName: string | null
+  submissionTitle: string | null
+  recipientUids: string[]
+}) {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !messageId) return []
+
+  const deduped = Array.from(new Set(recipientUids.filter((value) => typeof value === 'string' && value.trim().length > 0 && value !== senderUid)))
+  if (deduped.length === 0) return []
+
+  const listUrl = `${SUPABASE_URL.replace(/\/$/, '')}/rest/v1/notifications?message_id=eq.${encodeURIComponent(messageId)}&select=id,recipient_uid`
+  const existingRes = await fetch(listUrl, {
+    method: 'GET',
+    headers: {
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      Accept: 'application/json',
+    },
+  })
+
+  const existingRows = existingRes.ok ? await existingRes.json() : []
+  const existingByRecipient = new Set(
+    Array.isArray(existingRows)
+      ? existingRows
+          .map((row: any) => row?.recipient_uid)
+          .filter((value: any) => typeof value === 'string' && value.trim().length > 0)
+      : [],
+  )
+
+  const rows = deduped
+    .filter((recipientUid) => !existingByRecipient.has(recipientUid))
+    .map((recipientUid) => ({
+      recipient_uid: recipientUid,
+      type: 'new_message',
+      submission_id: submissionId,
+      message_id: messageId,
+      sender_uid: senderUid,
+      sender_name: senderName || null,
+      submission_name: submissionTitle || null,
+      is_read: false,
+      created_at: new Date().toISOString(),
+    }))
+
+  if (!rows.length) return []
+
+  const notificationsUrl = `${SUPABASE_URL.replace(/\/$/, '')}/rest/v1/notifications`
+  const insertRes = await fetch(notificationsUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      Prefer: 'return=representation',
+    },
+    body: JSON.stringify(rows),
+  })
+
+  if (!insertRes.ok) {
+    const text = await insertRes.text()
+    console.error('send-message: notification insert failed', insertRes.status, text)
+    return []
+  }
+
+  try {
+    return await insertRes.json()
+  } catch {
+    return []
+  }
+}
+
 const makeJson = (obj: any, status = 200) => {
   const allowedOriginHeader = ALLOWED_ORIGINS ? ALLOWED_ORIGINS : '*'
   return new Response(JSON.stringify(obj), {
@@ -159,7 +265,7 @@ Deno.serve(async (req: Request) => {
       return makeJson({ error: 'Message is required' }, 400)
     }
 
-    const submissionUrl = `${SUPABASE_URL.replace(/\/$/, '')}/rest/v1/submissions?id=eq.${encodeURIComponent(submissionId)}&select=id,user_id`
+    const submissionUrl = `${SUPABASE_URL.replace(/\/$/, '')}/rest/v1/submissions?id=eq.${encodeURIComponent(submissionId)}&select=id,user_id,title`
     const submissionRes = await fetch(submissionUrl, {
       method: 'GET',
       headers: {
@@ -246,6 +352,35 @@ Deno.serve(async (req: Request) => {
     }
 
     const saved = Array.isArray(insertData) ? insertData[0] : insertData
+    const messageId = saved?.id || row?.id || null
+
+    try {
+      if (messageId) {
+        const recipientUids: string[] = []
+        if (senderRole === 'student') {
+          const reviewerUids = await listReviewerUids()
+          recipientUids.push(...reviewerUids)
+        } else {
+          recipientUids.push(String(submission.user_id || ''))
+        }
+
+        const notificationRows = await createNotificationsForMessage({
+          submissionId: String(submissionId),
+          messageId: String(messageId),
+          senderUid: uid,
+          senderName: senderName || null,
+          submissionTitle: typeof submission?.title === 'string' ? submission.title : null,
+          recipientUids,
+        })
+
+        if (notificationRows.length > 0) {
+          console.log('send-message: created notifications', notificationRows.length)
+        }
+      }
+    } catch (notificationErr) {
+      console.error('send-message: notification creation failed', notificationErr)
+    }
+
     return makeJson({ message: saved || row }, 200)
   } catch (err) {
     console.error('Unexpected error in send-message', err)
