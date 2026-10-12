@@ -300,7 +300,9 @@ function App() {
     const optimisticMessage = {
       id: `optimistic-${Date.now()}`,
       from: authContext === 'reviewer' ? 'reviewer' : 'student',
-      sender_name: resolveFirstName(auth?.currentUser?.displayName || profile.name, authContext === 'reviewer' ? 'Reviewer' : 'Student'),
+      sender_name: authContext === 'reviewer'
+        ? 'Reviewer'
+        : resolveFirstName(auth?.currentUser?.displayName || profile.name, 'Student'),
       text: chatDraft.trim(),
       createdAt: new Date().toISOString(),
     }
@@ -319,6 +321,9 @@ function App() {
         body: JSON.stringify({
           submission_id: chatThreadSubmissionId,
           message: optimisticMessage.text,
+          sender_name: authContext === 'reviewer'
+            ? 'Reviewer'
+            : resolveFirstName(auth?.currentUser?.displayName || profile.name, 'Student'),
         }),
       })
 
