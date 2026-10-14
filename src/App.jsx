@@ -223,8 +223,25 @@ function App() {
     return `${Math.abs(diffDays) || 1} day ago`
   }
 
+  const normalizeNotifications = (incoming) => {
+    if (!Array.isArray(incoming)) return []
+
+    const map = new Map()
+    incoming.forEach((item) => {
+      const key = String(item?.id ?? '')
+      if (!key) return
+      if (!map.has(key)) map.set(key, item)
+    })
+
+    return [...map.values()].sort((a, b) => {
+      const left = a?.created_at ? new Date(a.created_at).getTime() : 0
+      const right = b?.created_at ? new Date(b.created_at).getTime() : 0
+      return right - left
+    })
+  }
+
   const loadNotifications = async () => {
-    if (!auth?.currentUser) {
+    if (!authResolved || !auth?.currentUser?.uid) {
       setNotifications([])
       return
     }
@@ -261,7 +278,7 @@ function App() {
         throw new Error(payload?.error || 'Unable to load notifications.')
       }
 
-      setNotifications(Array.isArray(payload?.notifications) ? payload.notifications : [])
+      setNotifications(normalizeNotifications(payload?.notifications))
     } catch (err) {
       console.error('Unable to load notifications:', err)
       setNotifications([])
@@ -513,6 +530,8 @@ function App() {
             : message
         )))
       }
+
+      await loadNotifications()
     } catch (err) {
       console.error('Unable to send message:', err)
       setChatError(err?.message || 'Unable to send message.')
