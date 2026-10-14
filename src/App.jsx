@@ -116,7 +116,7 @@ const markOnboardingComplete = (email) => {
 // The old VITE_APPROVED_REVIEWER_EMAILS client-side whitelist was removed.
 
 function App() {
-  const [screen, setScreen] = useState('landing')
+  const [screen, setScreen] = useState('loading')
   const [accountStage, setAccountStage] = useState('auth')
   const [profile, setProfile] = useState({
     name: 'Ava',
@@ -347,7 +347,7 @@ function App() {
     setReviewerSelectedSubmissionId(targetId)
     setChatThreadSubmissionId(targetId)
     setChatModalOpen(true)
-    setNotificationOpen(false)
+    setNotificationsOpen(false)
     setScreen(authContext === 'reviewer' ? 'reviewer-dashboard' : 'dashboard')
 
     await loadChatMessages(targetId)
@@ -703,24 +703,44 @@ function App() {
   useEffect(() => {
     if (!auth) {
       setAuthMessage('Add your Firebase credentials to enable Google sign-in.')
+      setAuthResolved(true)
+      setScreen('landing')
       setNotifications([])
       return undefined
     }
 
+    let active = true
+
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      // mark that auth has been resolved and expose UID
-      setAuthUid(user?.uid ?? null)
+      if (!active) return
+
+      const nextUser = user ?? null
+      setAuthUid(nextUser?.uid ?? null)
       setAuthResolved(true)
 
-      if (!user) return
+      if (!nextUser) {
+        setAuthContext('student')
+        setReviewerLoggedIn(false)
+        setReviewerSelectedSubmissionId(null)
+        setReviewNotice('')
+        setScreen('landing')
+        setNotifications([])
+        return
+      }
 
-      // If someone is signed in, check whether they are an approved reviewer
-      // via the secure Edge Function. If so, treat the session as a reviewer
-      // session and avoid routing them into the student flow.
+      const normalizedEmail = nextUser.email?.toLowerCase() || ''
+
+      setProfile((current) => ({
+        ...current,
+        name: nextUser.displayName?.split(' ')[0] || current.name,
+        email: normalizedEmail || current.email,
+      }))
+      setAuthMessage('')
+
       const verifyUrl = import.meta.env.VITE_VERIFY_REVIEWER_URL
       if (verifyUrl) {
         try {
-          const idToken = await user.getIdToken()
+          const idToken = await nextUser.getIdToken()
           const resp = await fetch(verifyUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -732,34 +752,21 @@ function App() {
           try { data = JSON.parse(text) } catch (e) { data = text }
 
           if (resp.ok && data?.isReviewer) {
-            // Treat this authenticated user as reviewer
             setAuthContext('reviewer')
             setReviewerLoggedIn(true)
-            const reviewerEmail = (user.email || '').toLowerCase()
-            setProfile((current) => ({ ...current, name: user.displayName?.split(' ')[0] || current.name, email: reviewerEmail || current.email }))
+            const reviewerEmail = (nextUser.email || '').toLowerCase()
+            setProfile((current) => ({ ...current, name: nextUser.displayName?.split(' ')[0] || current.name, email: reviewerEmail || current.email }))
             setReviewerSelectedSubmissionId(submissions[0]?.id ?? null)
             setScreen('reviewer-dashboard')
             setReviewNotice('')
             return
           }
         } catch (err) {
-          // If verification fails, fall back to the student flow below.
           console.log('Reviewer verification during auth state change failed', err)
         }
       }
 
-      // Student flow (only if not a reviewer)
-      if (authContext === 'reviewer') return
-
-      const normalizedEmail = user.email?.toLowerCase() || ''
-
-      setProfile((current) => ({
-        ...current,
-        name: user.displayName?.split(' ')[0] || current.name,
-        email: normalizedEmail || current.email,
-      }))
-      setAuthMessage('')
-
+      setAuthContext('student')
       if (normalizedEmail && hasCompletedOnboarding(normalizedEmail)) {
         setScreen('dashboard')
         return
@@ -769,8 +776,11 @@ function App() {
       setScreen('onboarding')
     })
 
-    return unsubscribe
-  }, [auth, authContext])
+    return () => {
+      active = false
+      unsubscribe()
+    }
+  }, [auth])
 
   useEffect(() => {
     if (!authResolved || !auth?.currentUser) {
@@ -1308,6 +1318,14 @@ function App() {
 
       <main id="top">
         <div key={screen} className="page-transition">
+        {screen === 'loading' && (
+          <section className="flow-card">
+            <p className="eyebrow">Loading</p>
+            <h2>Checking your session…</h2>
+            <p className="flow-copy">Please wait while we restore your DraftSpace account.</p>
+          </section>
+        )}
+
         {screen === 'landing' && (
           <>
             <section className="hero section">
