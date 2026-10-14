@@ -42,6 +42,25 @@ const reasonOptions = [
 
 const STORAGE_KEY = 'draftspace-submissions'
 const ONBOARDING_STORAGE_KEY = 'draftspace-onboarding-complete'
+const REVIEWER_SESSION_KEY = 'draftspace-reviewer-session'
+
+const readReviewerSession = () => {
+  if (typeof window === 'undefined') return false
+  try {
+    return window.sessionStorage.getItem(REVIEWER_SESSION_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
+const writeReviewerSession = (value) => {
+  if (typeof window === 'undefined') return
+  try {
+    window.sessionStorage.setItem(REVIEWER_SESSION_KEY, value ? 'true' : 'false')
+  } catch {
+    // ignore browser storage issues
+  }
+}
 
 // Submissions are persisted exclusively to Firestore. Do not initialize from localStorage.
 
@@ -792,6 +811,44 @@ function App() {
       }))
       setAuthMessage('')
 
+      const reviewerSessionEnabled = readReviewerSession()
+      if (reviewerSessionEnabled) {
+        const verifyUrl = import.meta.env.VITE_VERIFY_REVIEWER_URL
+        if (verifyUrl) {
+          try {
+            const idToken = await nextUser.getIdToken()
+            const resp = await fetch(verifyUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ idToken }),
+            })
+
+            const text = await resp.text()
+            let data = null
+            try { data = JSON.parse(text) } catch (e) { data = text }
+
+            if (resp.ok && data?.isReviewer) {
+              setAuthContext('reviewer')
+              setReviewerLoggedIn(true)
+              setReviewerSelectedSubmissionId(submissions[0]?.id ?? null)
+              setScreen('reviewer-dashboard')
+              setReviewNotice('')
+              return
+            }
+          } catch (err) {
+            console.log('Reviewer session restoration failed', err)
+          }
+        }
+
+        writeReviewerSession(false)
+        setAuthContext('student')
+        setReviewerLoggedIn(false)
+        setReviewNotice('unauthorized')
+        setScreen('reviewer-login')
+        await signOut(auth)
+        return
+      }
+
       setAuthContext('student')
       if (normalizedEmail && hasCompletedOnboarding(normalizedEmail)) {
         setScreen('dashboard')
@@ -853,6 +910,7 @@ function App() {
     } catch (err) {
       console.error('Error signing out:', err)
     }
+    writeReviewerSession(false)
     setReviewerLoggedIn(false)
     setReviewerSelectedSubmissionId(null)
     setReviewerFeedback({ overall: '', strengths: '', areas: '', voice: '', next: '' })
@@ -1134,6 +1192,7 @@ function App() {
 
       if (!resp.ok) {
         reviewerUnauthorizedRef.current = true
+        writeReviewerSession(false)
         await signOut(auth)
         setReviewerLoggedIn(false)
         setReviewNotice('unauthorized')
@@ -1143,6 +1202,7 @@ function App() {
 
       if (data?.isReviewer) {
         const reviewerEmail = result.user.email?.toLowerCase() ?? ''
+        writeReviewerSession(true)
         setProfile((current) => ({
           ...current,
           name: result.user.displayName?.split(' ')[0] || current.name,
@@ -1156,6 +1216,7 @@ function App() {
       }
 
       reviewerUnauthorizedRef.current = true
+      writeReviewerSession(false)
       await signOut(auth)
       setReviewerLoggedIn(false)
       setReviewNotice('unauthorized')
