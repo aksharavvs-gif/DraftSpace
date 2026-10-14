@@ -242,15 +242,23 @@ function App() {
 
   const loadNotifications = async () => {
     if (!authResolved || !auth?.currentUser?.uid) {
+      console.log('loadNotifications: skipped; authResolved=', authResolved, 'uid=', auth?.currentUser?.uid ?? null)
       setNotifications([])
       return
     }
 
     const getUrl = import.meta.env.VITE_GET_NOTIFICATIONS_URL
     if (!getUrl) {
+      console.warn('loadNotifications: missing VITE_GET_NOTIFICATIONS_URL')
       setNotifications([])
       return
     }
+
+    console.log('loadNotifications: firing fetch', {
+      url: getUrl.replace(/https?:\/\/[^/]+/i, '[DEPLOYED_HOST]'),
+      uid: auth.currentUser.uid,
+      authContext,
+    })
 
     setNotificationsLoading(true)
     setNotificationsError('')
@@ -274,11 +282,26 @@ function App() {
         payload = { message: text }
       }
 
+      console.log('loadNotifications: response', {
+        status: response.status,
+        ok: response.ok,
+        uid: auth.currentUser.uid,
+        authContext,
+        payload,
+        returnedCount: Array.isArray(payload?.notifications) ? payload.notifications.length : 0,
+      })
+
       if (!response.ok) {
         throw new Error(payload?.error || 'Unable to load notifications.')
       }
 
-      setNotifications(normalizeNotifications(payload?.notifications))
+      const nextNotifications = normalizeNotifications(payload?.notifications)
+      console.log('loadNotifications: setNotifications state', {
+        uid: auth.currentUser.uid,
+        count: nextNotifications.length,
+        items: nextNotifications.map((item) => ({ id: item.id, is_read: item.is_read, submission_id: item.submission_id, sender_name: item.sender_name, submission_name: item.submission_name })),
+      })
+      setNotifications(nextNotifications)
     } catch (err) {
       console.error('Unable to load notifications:', err)
       setNotifications([])
@@ -531,6 +554,7 @@ function App() {
         )))
       }
 
+      console.log('sendChatMessage: message saved; reloading notifications for uid=', auth?.currentUser?.uid ?? null, 'context=', authContext)
       await loadNotifications()
     } catch (err) {
       console.error('Unable to send message:', err)
@@ -1263,6 +1287,12 @@ function App() {
               aria-label="Notifications"
               onClick={async () => {
                 const nextState = !notificationsOpen
+                console.log('notification bell clicked', {
+                  nextState,
+                  uid: auth?.currentUser?.uid ?? null,
+                  authContext,
+                  currentNotificationCount: notifications.length,
+                })
                 setNotificationsOpen(nextState)
                 if (nextState) {
                   await loadNotifications()
