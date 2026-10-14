@@ -176,6 +176,7 @@ function App() {
   const [notifications, setNotifications] = useState([])
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const reviewerUnauthorizedRef = useRef(false)
+  const reviewerAuthInFlightRef = useRef(false)
   const [notificationsLoading, setNotificationsLoading] = useState(false)
   const [notificationsError, setNotificationsError] = useState('')
   const [reviewNotice, setReviewNotice] = useState('')
@@ -802,6 +803,10 @@ function App() {
         return
       }
 
+      if (reviewerAuthInFlightRef.current) {
+        return
+      }
+
       const normalizedEmail = nextUser.email?.toLowerCase() || ''
 
       setProfile((current) => ({
@@ -1140,6 +1145,7 @@ function App() {
       return
     }
 
+    reviewerAuthInFlightRef.current = true
     setAuthContext('reviewer')
     setReviewNotice('')
 
@@ -1165,9 +1171,12 @@ function App() {
       }
 
       if (!verifyUrl) {
+        reviewerUnauthorizedRef.current = true
+        writeReviewerSession(false)
         // No verification endpoint configured
         await signOut(auth)
         setReviewNotice('Reviewer verification endpoint not configured. Contact the admin.')
+        setScreen('reviewer-login')
         return
       }
 
@@ -1225,6 +1234,16 @@ function App() {
       // Log the caught error name and message; do not log any tokens
       console.error('Reviewer sign-in error:', error?.name, error?.message)
       setReviewNotice(error?.message || 'Google sign-in did not complete.')
+      setScreen('reviewer-login')
+      reviewerUnauthorizedRef.current = true
+      writeReviewerSession(false)
+      try {
+        await signOut(auth)
+      } catch (err) {
+        console.error('Unable to sign out after reviewer sign-in error:', err)
+      }
+    } finally {
+      reviewerAuthInFlightRef.current = false
     }
   }
 
