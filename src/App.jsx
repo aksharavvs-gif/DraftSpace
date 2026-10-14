@@ -768,44 +768,6 @@ function App() {
       }))
       setAuthMessage('')
 
-      const verifyUrl = import.meta.env.VITE_VERIFY_REVIEWER_URL
-      if (verifyUrl) {
-        try {
-          const idToken = await nextUser.getIdToken()
-          const resp = await fetch(verifyUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ idToken }),
-          })
-
-          const text = await resp.text()
-          let data = null
-          try { data = JSON.parse(text) } catch (e) { data = text }
-
-          if (resp.ok && data?.isReviewer) {
-            setAuthContext('reviewer')
-            setReviewerLoggedIn(true)
-            const reviewerEmail = (nextUser.email || '').toLowerCase()
-            setProfile((current) => ({ ...current, name: nextUser.displayName?.split(' ')[0] || current.name, email: reviewerEmail || current.email }))
-            setReviewerSelectedSubmissionId(submissions[0]?.id ?? null)
-            setScreen('reviewer-dashboard')
-            setReviewNotice('')
-            return
-          }
-
-          if (resp.ok && !data?.isReviewer) {
-            reviewerUnauthorizedRef.current = true
-            setReviewNotice('unauthorized')
-            setScreen('reviewer-login')
-            await signOut(auth)
-            setReviewerLoggedIn(false)
-            return
-          }
-        } catch (err) {
-          console.log('Reviewer verification during auth state change failed', err)
-        }
-      }
-
       setAuthContext('student')
       if (normalizedEmail && hasCompletedOnboarding(normalizedEmail)) {
         setScreen('dashboard')
