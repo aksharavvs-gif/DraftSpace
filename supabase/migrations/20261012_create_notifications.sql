@@ -23,9 +23,11 @@ create index if not exists notifications_recipient_created_at_idx
 create index if not exists notifications_unread_idx
   on public.notifications (recipient_uid, is_read, created_at desc);
 
-create unique index if not exists notifications_message_unique_idx
-  on public.notifications (message_id)
-  where message_id is not null;
+drop index if exists public.notifications_message_unique_idx;
+
+create unique index if not exists notifications_message_recipient_unique_idx
+  on public.notifications (message_id, recipient_uid)
+  where message_id is not null and recipient_uid is not null;
 
 -- Optional: helpful if the app later needs to fetch notifications for a given submission.
 create index if not exists notifications_recipient_submission_idx

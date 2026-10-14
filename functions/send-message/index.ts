@@ -184,8 +184,22 @@ async function createNotificationsForMessage({
   })
 
   if (!insertRes.ok) {
-    const text = await insertRes.text()
-    console.error('send-message: notification insert failed', insertRes.status, text)
+    const text = await insertRes.text().catch(() => '')
+    let payload: any = null
+    try {
+      payload = text ? JSON.parse(text) : null
+    } catch {
+      payload = null
+    }
+
+    console.error('send-message: notification insert failed', {
+      status: insertRes.status,
+      code: payload?.code || null,
+      message: payload?.message || null,
+      recipientCount: rows.length,
+      messageId,
+      submissionId,
+    })
     return []
   }
 
@@ -355,7 +369,13 @@ Deno.serve(async (req: Request) => {
     const messageId = saved?.id || row?.id || null
 
     try {
-      if (messageId) {
+      if (!messageId) {
+        console.error('send-message: message insert succeeded but no message id was returned; notification creation skipped', {
+          submissionId,
+          senderRole,
+          senderUid: uid,
+        })
+      } else {
         const recipientUids: string[] = []
         if (senderRole === 'student') {
           const reviewerUids = await listReviewerUids()
@@ -378,7 +398,10 @@ Deno.serve(async (req: Request) => {
         }
       }
     } catch (notificationErr) {
-      console.error('send-message: notification creation failed', notificationErr)
+      console.error('send-message: notification creation failed', {
+        name: notificationErr instanceof Error ? notificationErr.name : 'Error',
+        message: notificationErr instanceof Error ? notificationErr.message : String(notificationErr),
+      })
     }
 
     return makeJson({ message: saved || row }, 200)
