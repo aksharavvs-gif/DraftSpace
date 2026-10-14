@@ -156,6 +156,7 @@ function App() {
   const [chatError, setChatError] = useState('')
   const [notifications, setNotifications] = useState([])
   const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const reviewerUnauthorizedRef = useRef(false)
   const [notificationsLoading, setNotificationsLoading] = useState(false)
   const [notificationsError, setNotificationsError] = useState('')
   const [reviewNotice, setReviewNotice] = useState('')
@@ -719,6 +720,17 @@ function App() {
       setAuthResolved(true)
 
       if (!nextUser) {
+        if (reviewerUnauthorizedRef.current) {
+          setAuthContext('student')
+          setReviewerLoggedIn(false)
+          setReviewerSelectedSubmissionId(null)
+          setReviewNotice('unauthorized')
+          setScreen('reviewer-login')
+          reviewerUnauthorizedRef.current = false
+          setNotifications([])
+          return
+        }
+
         setAuthContext('student')
         setReviewerLoggedIn(false)
         setReviewerSelectedSubmissionId(null)
@@ -759,6 +771,15 @@ function App() {
             setReviewerSelectedSubmissionId(submissions[0]?.id ?? null)
             setScreen('reviewer-dashboard')
             setReviewNotice('')
+            return
+          }
+
+          if (resp.ok && !data?.isReviewer) {
+            reviewerUnauthorizedRef.current = true
+            setReviewNotice('unauthorized')
+            setScreen('reviewer-login')
+            await signOut(auth)
+            setReviewerLoggedIn(false)
             return
           }
         } catch (err) {
@@ -1107,9 +1128,11 @@ function App() {
       }
 
       if (!resp.ok) {
+        reviewerUnauthorizedRef.current = true
         await signOut(auth)
         setReviewerLoggedIn(false)
-        setReviewNotice('Reviewer verification failed. Access denied.')
+        setReviewNotice('unauthorized')
+        setScreen('reviewer-login')
         return
       }
 
@@ -1127,9 +1150,11 @@ function App() {
         return
       }
 
+      reviewerUnauthorizedRef.current = true
       await signOut(auth)
       setReviewerLoggedIn(false)
-      setReviewNotice('Your google account is not authorized as a reviewer')
+      setReviewNotice('unauthorized')
+      setScreen('reviewer-login')
     } catch (error) {
       // Log the caught error name and message; do not log any tokens
       console.error('Reviewer sign-in error:', error?.name, error?.message)
