@@ -349,12 +349,6 @@ function SubmissionDraftViewer({
                 title={meta.label}
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={(event) => {
-                  console.log('[highlight-debug] color-button click', {
-                    sectionId,
-                    hasSelectionText: Boolean(selectionToolbar?.selectedText),
-                    selectionLength: selectionToolbar?.selectedText?.length ?? 0,
-                    hasRange: Boolean(selectionToolbar?.range),
-                  })
                   event.preventDefault()
                   event.stopPropagation()
                   onHighlightAction({
@@ -472,6 +466,8 @@ function App() {
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const reviewerUnauthorizedRef = useRef(false)
   const reviewerAuthInFlightRef = useRef(false)
+  const lastConfirmedHighlightsRef = useRef({})
+  const highlightSaveRequestRef = useRef({})
   const [notificationsLoading, setNotificationsLoading] = useState(false)
   const [notificationsError, setNotificationsError] = useState('')
   const [reviewNotice, setReviewNotice] = useState('')
@@ -1567,35 +1563,28 @@ function App() {
   }
 
   const saveSubmissionHighlights = async (submissionId, highlights) => {
-    console.log('[highlight-debug] saveSubmissionHighlights entry', {
-      hasSubmissionId: Boolean(submissionId),
-      highlightCount: Array.isArray(highlights) ? highlights.length : 0,
-      hasAuthUser: Boolean(auth?.currentUser),
-      saveUrlConfigured: Boolean(import.meta.env.VITE_UPDATE_SUBMISSION_HIGHLIGHTS_URL),
-    })
-
     if (!submissionId || !auth?.currentUser) {
-      console.log('[highlight-debug] saveSubmissionHighlights early return: missing submissionId or auth user', {
-        hasSubmissionId: Boolean(submissionId),
-        hasAuthUser: Boolean(auth?.currentUser),
-      })
       return null
     }
 
     const saveUrl = import.meta.env.VITE_UPDATE_SUBMISSION_HIGHLIGHTS_URL
     if (!saveUrl) {
-      console.log('[highlight-debug] saveSubmissionHighlights early return: missing VITE_UPDATE_SUBMISSION_HIGHLIGHTS_URL')
       setReviewNotice('Highlight save endpoint not configured.')
       return null
     }
 
+    const normalizedHighlights = normalizeSubmissionHighlights(highlights)
+    const requestNumber = (highlightSaveRequestRef.current[submissionId] || 0) + 1
+    highlightSaveRequestRef.current[submissionId] = requestNumber
+
+    const lastConfirmed = lastConfirmedHighlightsRef.current[submissionId] || normalizeSubmissionHighlights(
+      submissions.find((item) => item.id === submissionId)?.highlights || [],
+    )
+
+    setSubmissions((current) => current.map((s) => (s.id === submissionId ? { ...s, highlights: normalizedHighlights } : s)))
+
     try {
       const idToken = await auth.currentUser.getIdToken()
-      console.log('[highlight-debug] saveSubmissionHighlights fetch attempt', {
-        saveUrlHost: new URL(saveUrl).host,
-        highlightCount: Array.isArray(highlights) ? highlights.length : 0,
-        submissionId,
-      })
       const resp = await fetch(saveUrl, {
         method: 'POST',
         headers: {
@@ -1604,7 +1593,7 @@ function App() {
         },
         body: JSON.stringify({
           submission_id: submissionId,
-          highlights,
+          highlights: normalizedHighlights,
         }),
       })
 
@@ -1612,18 +1601,29 @@ function App() {
       let data = null
       try { data = JSON.parse(text) } catch (e) { data = text }
 
-      if (!resp.ok) {
-        console.error('update-submission-highlights failed', resp.status, data)
-        setReviewNotice('Unable to save the highlight. Please try again.')
+      if (highlightSaveRequestRef.current[submissionId] !== requestNumber) {
         return null
       }
 
-      const nextHighlights = normalizeSubmissionHighlights(data?.highlights || highlights)
+      if (!resp.ok) {
+        console.error('update-submission-highlights failed', resp.status, data)
+        setSubmissions((current) => current.map((s) => (s.id === submissionId ? { ...s, highlights: lastConfirmed } : s)))
+        setReviewNotice('Unable to save the highlight. Your latest change was not saved.')
+        return null
+      }
+
+      const nextHighlights = normalizeSubmissionHighlights(data?.highlights || normalizedHighlights)
+      lastConfirmedHighlightsRef.current[submissionId] = nextHighlights
       setSubmissions((current) => current.map((s) => (s.id === submissionId ? { ...s, highlights: nextHighlights } : s)))
       return nextHighlights
     } catch (err) {
+      if (highlightSaveRequestRef.current[submissionId] !== requestNumber) {
+        return null
+      }
+
       console.error('Error saving highlights', err)
-      setReviewNotice('Unable to save the highlight. Please try again.')
+      setSubmissions((current) => current.map((s) => (s.id === submissionId ? { ...s, highlights: lastConfirmed } : s)))
+      setReviewNotice('Unable to save the highlight. Your latest change was not saved.')
       return null
     }
   }
@@ -1677,11 +1677,6 @@ function App() {
       }
 
       const nextHighlights = [...currentHighlights, nextHighlight]
-      console.log('[highlight-debug] handleHighlightAction create dispatch', {
-        sectionId,
-        activeSubmissionId: activeSubmission.id,
-        nextHighlightCount: nextHighlights.length,
-      })
       const savedHighlights = await saveSubmissionHighlights(activeSubmission.id, nextHighlights)
       if (savedHighlights) {
         setSelectionToolbar(null)
