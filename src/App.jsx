@@ -158,6 +158,7 @@ function App() {
   })
   // local reviewer password login removed; reviewers authorize via Edge Function
   const [reviewerLoggedIn, setReviewerLoggedIn] = useState(false)
+  const [reviewerAuthState, setReviewerAuthState] = useState('idle')
   const [reviewerSelectedSubmissionId, setReviewerSelectedSubmissionId] = useState(null)
   const [reviewerTab, setReviewerTab] = useState('awaiting')
   const [reviewerFeedback, setReviewerFeedback] = useState({
@@ -786,8 +787,9 @@ function App() {
         if (reviewerUnauthorizedRef.current) {
           setAuthContext('student')
           setReviewerLoggedIn(false)
+          setReviewerAuthState('idle')
           setReviewerSelectedSubmissionId(null)
-          setReviewNotice('unauthorized')
+          setReviewNotice('This Google account is not authorized for reviewer access.')
           setScreen('reviewer-login')
           reviewerUnauthorizedRef.current = false
           setNotifications([])
@@ -796,6 +798,7 @@ function App() {
 
         setAuthContext('student')
         setReviewerLoggedIn(false)
+        setReviewerAuthState('idle')
         setReviewerSelectedSubmissionId(null)
         setReviewNotice('')
         setScreen('landing')
@@ -818,6 +821,10 @@ function App() {
 
       const reviewerSessionEnabled = readReviewerSession()
       if (reviewerSessionEnabled) {
+        setReviewerAuthState('pending')
+        setReviewNotice('Checking reviewer access…')
+        setScreen('reviewer-login')
+
         const verifyUrl = import.meta.env.VITE_VERIFY_REVIEWER_URL
         if (verifyUrl) {
           try {
@@ -835,6 +842,7 @@ function App() {
             if (resp.ok && data?.isReviewer) {
               setAuthContext('reviewer')
               setReviewerLoggedIn(true)
+              setReviewerAuthState('authorized')
               setReviewerSelectedSubmissionId(submissions[0]?.id ?? null)
               setScreen('reviewer-dashboard')
               setReviewNotice('')
@@ -848,7 +856,8 @@ function App() {
         writeReviewerSession(false)
         setAuthContext('student')
         setReviewerLoggedIn(false)
-        setReviewNotice('unauthorized')
+        setReviewerAuthState('unauthorized')
+        setReviewNotice('This Google account is not authorized for reviewer access.')
         setScreen('reviewer-login')
         await signOut(auth)
         return
@@ -917,6 +926,7 @@ function App() {
     }
     writeReviewerSession(false)
     setReviewerLoggedIn(false)
+    setReviewerAuthState('idle')
     setReviewerSelectedSubmissionId(null)
     setReviewerFeedback({ overall: '', strengths: '', areas: '', voice: '', next: '' })
     setAuthContext('student')
@@ -981,6 +991,8 @@ function App() {
   const handleSignOut = async () => {
     if (!auth) return
     await signOut(auth)
+    setReviewerLoggedIn(false)
+    setReviewerAuthState('idle')
     setAuthContext('student')
     setScreen('landing')
     setAuthMessage('You signed out. Sign in again anytime.')
@@ -1146,8 +1158,12 @@ function App() {
     }
 
     reviewerAuthInFlightRef.current = true
+    reviewerUnauthorizedRef.current = false
     setAuthContext('reviewer')
-    setReviewNotice('')
+    setReviewerLoggedIn(false)
+    setReviewerAuthState('pending')
+    setReviewNotice('Checking reviewer access…')
+    setScreen('reviewer-login')
 
     try {
       const result = await signInWithPopup(auth, googleProvider)
@@ -1175,6 +1191,8 @@ function App() {
         writeReviewerSession(false)
         // No verification endpoint configured
         await signOut(auth)
+        setReviewerLoggedIn(false)
+        setReviewerAuthState('unauthorized')
         setReviewNotice('Reviewer verification endpoint not configured. Contact the admin.')
         setScreen('reviewer-login')
         return
@@ -1199,41 +1217,36 @@ function App() {
         console.log('verify-reviewer response text=', respText)
       }
 
-      if (!resp.ok) {
+      if (!resp.ok || !data?.isReviewer) {
         reviewerUnauthorizedRef.current = true
         writeReviewerSession(false)
         await signOut(auth)
         setReviewerLoggedIn(false)
-        setReviewNotice('unauthorized')
+        setReviewerAuthState('unauthorized')
+        setReviewNotice('This Google account is not authorized for reviewer access.')
         setScreen('reviewer-login')
         return
       }
 
-      if (data?.isReviewer) {
-        const reviewerEmail = result.user.email?.toLowerCase() ?? ''
-        writeReviewerSession(true)
-        setProfile((current) => ({
-          ...current,
-          name: result.user.displayName?.split(' ')[0] || current.name,
-          email: reviewerEmail || current.email,
-        }))
-        setReviewerLoggedIn(true)
-        setReviewerSelectedSubmissionId(submissions[0]?.id ?? null)
-        setScreen('reviewer-dashboard')
-        setReviewNotice('')
-        return
-      }
-
-      reviewerUnauthorizedRef.current = true
-      writeReviewerSession(false)
-      await signOut(auth)
-      setReviewerLoggedIn(false)
-      setReviewNotice('unauthorized')
-      setScreen('reviewer-login')
+      const reviewerEmail = result.user.email?.toLowerCase() ?? ''
+      writeReviewerSession(true)
+      setProfile((current) => ({
+        ...current,
+        name: result.user.displayName?.split(' ')[0] || current.name,
+        email: reviewerEmail || current.email,
+      }))
+      setReviewerLoggedIn(true)
+      setReviewerAuthState('authorized')
+      setReviewerSelectedSubmissionId(submissions[0]?.id ?? null)
+      setScreen('reviewer-dashboard')
+      setReviewNotice('')
+      return
     } catch (error) {
       // Log the caught error name and message; do not log any tokens
       console.error('Reviewer sign-in error:', error?.name, error?.message)
-      setReviewNotice(error?.message || 'Google sign-in did not complete.')
+      setReviewerLoggedIn(false)
+      setReviewerAuthState('unauthorized')
+      setReviewNotice(error?.message || 'Google sign-in did not complete. Please try again.')
       setScreen('reviewer-login')
       reviewerUnauthorizedRef.current = true
       writeReviewerSession(false)
@@ -1869,16 +1882,26 @@ function App() {
         {screen === 'reviewer-login' && (
           <section className="flow-card">
             <p className="eyebrow">Reviewer access</p>
-            <h2>Sign in to review student submissions.</h2>
-            <button type="button" className="button primary large" onClick={handleReviewerGoogleSignIn}>
-              Continue with Google as reviewer
-            </button>
-            <p className="tiny-note">Use your approved reviewer Google account to enter the workspace.</p>
+            <h2>
+              {reviewerAuthState === 'pending'
+                ? 'Checking reviewer access…'
+                : 'Sign in to review student submissions.'}
+            </h2>
+            {reviewerAuthState === 'pending' ? (
+              <p className="flow-copy">Please wait while DraftSpace verifies your Google account.</p>
+            ) : (
+              <>
+                <button type="button" className="button primary large" onClick={handleReviewerGoogleSignIn}>
+                  Continue with Google as reviewer
+                </button>
+                <p className="tiny-note">Use your approved reviewer Google account to enter the workspace.</p>
+              </>
+            )}
             {reviewNotice && <p className="tiny-note">{reviewNotice}</p>}
           </section>
         )}
 
-        {screen === 'reviewer-dashboard' && reviewerLoggedIn && (
+        {screen === 'reviewer-dashboard' && reviewerLoggedIn && reviewerAuthState === 'authorized' && (
           <section className="reviewer-shell">
             <div className="dashboard-header">
               <div>
@@ -2076,7 +2099,7 @@ function App() {
           </section>
         )}
 
-        {screen === 'reviewer-chat' && reviewerLoggedIn && (
+        {screen === 'reviewer-chat' && reviewerLoggedIn && reviewerAuthState === 'authorized' && (
           <section className="flow-card chat-card">
             <div className="feedback-header">
               <div>
