@@ -1,10 +1,62 @@
-import { getCorsHeaders, getCorsOptionsResponse } from '../_shared/cors.ts'
-
 let joseModule: any = null
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || ''
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
 const FIREBASE_PROJECT_ID = Deno.env.get('FIREBASE_PROJECT_ID') || ''
+
+const DEFAULT_ALLOWED_ORIGINS = [
+  'https://draftsspace.com',
+  'https://aksharavvs-gif.github.io',
+]
+
+function normalizeOrigin(value: string) {
+  if (typeof value !== 'string') return ''
+  return value.trim().replace(/\/+$/, '')
+}
+
+function getAllowedOrigins() {
+  const configuredValue = Deno.env.get('ALLOWED_ORIGINS') || ''
+  const configuredOrigins = configuredValue
+    .split(',')
+    .map((origin) => normalizeOrigin(origin))
+    .filter(Boolean)
+
+  return Array.from(new Set([...configuredOrigins, ...DEFAULT_ALLOWED_ORIGINS]))
+}
+
+function getCorsHeaders(req: Request) {
+  const origin = normalizeOrigin(req.headers.get('origin') || '')
+  const allowedOrigins = getAllowedOrigins()
+
+  const headers: Record<string, string> = {
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Authorization, Content-Type, apikey, X-Client-Info, Prefer, Accept',
+    Vary: 'Origin',
+  }
+
+  if (origin && allowedOrigins.includes(origin)) {
+    headers['Access-Control-Allow-Origin'] = origin
+  }
+
+  return headers
+}
+
+function getCorsOptionsResponse(req: Request) {
+  const origin = normalizeOrigin(req.headers.get('origin') || '')
+  const allowedOrigins = getAllowedOrigins()
+
+  if (!origin || !allowedOrigins.includes(origin)) {
+    return new Response(null, {
+      status: 403,
+      headers: getCorsHeaders(req),
+    })
+  }
+
+  return new Response(null, {
+    status: 204,
+    headers: getCorsHeaders(req),
+  })
+}
 
 const JWKS_URL = 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com'
 
