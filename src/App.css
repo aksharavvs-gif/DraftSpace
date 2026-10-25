@@ -572,6 +572,126 @@
   grid-template-columns: 1.1fr 0.9fr;
 }
 
+.draft-viewer {
+  position: relative;
+  min-height: 120px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: rgba(252, 251, 255, 0.82);
+  color: var(--text-h);
+  line-height: 1.75;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+
+.draft-viewer.reviewer-mode {
+  cursor: text;
+}
+
+.highlight-mark {
+  display: inline;
+  padding: 0.08em 0.18em;
+  border-radius: 0.35em;
+  border: 1px solid rgba(121, 95, 170, 0.12);
+  cursor: pointer;
+  transition: transform 150ms ease, box-shadow 150ms ease;
+}
+
+.highlight-mark.flash {
+  box-shadow: 0 0 0 2px rgba(94, 75, 141, 0.18);
+}
+
+.highlight-toolbar,
+.highlight-editor {
+  position: absolute;
+  z-index: 10;
+  transform: translate(-50%, -100%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(122, 92, 184, 0.18);
+  box-shadow: 0 18px 32px rgba(49, 38, 79, 0.12);
+}
+
+.highlight-swatch {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  font-weight: 700;
+  padding: 0;
+  color: var(--text-h);
+}
+
+.highlight-swatch.small {
+  width: 24px;
+  height: 24px;
+}
+
+.highlight-remove {
+  border: 1px solid rgba(122, 92, 184, 0.18);
+  background: #fff;
+  color: var(--text-h);
+  border-radius: 999px;
+  padding: 6px 10px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.feedback-card,
+.feedback-section-card,
+.read-block {
+  border: 1px solid rgba(122, 92, 184, 0.14);
+  border-radius: 18px;
+  transition: box-shadow 180ms ease, transform 180ms ease;
+}
+
+.feedback-card.flash,
+.feedback-section-card.flash,
+.read-block.flash {
+  box-shadow: 0 0 0 3px rgba(122, 92, 184, 0.18);
+}
+
+.feedback-card,
+.feedback-section-card {
+  padding: 16px 18px;
+}
+
+.feedback-card h3,
+.feedback-section-card span,
+.read-block h5 {
+  margin: 0 0 8px;
+  font-size: 0.96rem;
+}
+
+.feedback-card p,
+.read-block p,
+.feedback-section-card textarea {
+  margin: 0;
+  color: var(--text-h);
+}
+
+.feedback-section-card textarea {
+  background: rgba(255,255,255,0.32);
+  border: 1px solid rgba(122, 92, 184, 0.12);
+  border-radius: 12px;
+  padding: 10px 12px;
+  resize: vertical;
+}
+
+.read-block {
+  padding: 14px 16px;
+  margin-top: 12px;
+}
+
 .essay-panel,
 .comment-card {
   border: 1px solid var(--border);

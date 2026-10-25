@@ -9,3 +9,6 @@ verify_jwt = false
 
 [functions.submit-review]
 verify_jwt = false
+
+[functions.update-submission-highlights]
+verify_jwt = false

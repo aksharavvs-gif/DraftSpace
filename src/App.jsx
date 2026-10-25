@@ -40,6 +40,81 @@ const reasonOptions = [
   'Share work with others',
 ]
 
+const FEEDBACK_SECTION_META = {
+  overall: {
+    id: 'overall',
+    label: 'Overall impression',
+    color: '#FBE2CC',
+    accent: '#A85F1B',
+    softBorder: '#e7b77f',
+  },
+  strengths: {
+    id: 'strengths',
+    label: 'Strengths',
+    color: '#FFF0B8',
+    accent: '#7A6110',
+    softBorder: '#e4ce65',
+  },
+  areas: {
+    id: 'areas',
+    label: 'Areas to improve',
+    color: '#DCEBFF',
+    accent: '#2C5A9D',
+    softBorder: '#9dbce9',
+  },
+  voice: {
+    id: 'voice',
+    label: 'Your voice',
+    color: '#DDF3DF',
+    accent: '#2E6C47',
+    softBorder: '#8ed19a',
+  },
+  next: {
+    id: 'next',
+    label: 'Next steps',
+    color: '#F8DDEC',
+    accent: '#8D4D76',
+    softBorder: '#e5adca',
+  },
+}
+
+const FEEDBACK_SECTION_ORDER = Object.keys(FEEDBACK_SECTION_META)
+
+const getFeedbackSectionMeta = (sectionId) => FEEDBACK_SECTION_META[sectionId] || FEEDBACK_SECTION_META.overall
+
+const normalizeHighlightSectionId = (value) => {
+  if (typeof value !== 'string') return 'overall'
+  return FEEDBACK_SECTION_ORDER.includes(value) ? value : 'overall'
+}
+
+const normalizeSubmissionHighlights = (raw) => {
+  if (!Array.isArray(raw)) return []
+
+  return raw
+    .filter((item) => item && typeof item === 'object')
+    .map((item, index) => {
+      const sectionId = normalizeHighlightSectionId(item.section_id || item.section || 'overall')
+      const meta = getFeedbackSectionMeta(sectionId)
+      const startOffset = Number.isFinite(Number(item.start_offset)) ? Number(item.start_offset) : 0
+      const endOffset = Number.isFinite(Number(item.end_offset)) ? Number(item.end_offset) : startOffset
+
+      return {
+        id: String(item.id || `highlight-${index}-${Date.now()}`),
+        submission_id: item.submission_id || null,
+        section_id: sectionId,
+        section: sectionId,
+        start_offset: Math.max(0, startOffset),
+        end_offset: Math.max(startOffset, endOffset),
+        color: item.color || meta.color,
+        selected_text: typeof item.selected_text === 'string' ? item.selected_text : '',
+        quote: typeof item.quote === 'string' ? item.quote : '',
+        created_at: item.created_at || new Date().toISOString(),
+        updated_at: item.updated_at || item.created_at || new Date().toISOString(),
+      }
+    })
+    .sort((a, b) => a.start_offset - b.start_offset)
+}
+
 const STORAGE_KEY = 'draftspace-submissions'
 const ONBOARDING_STORAGE_KEY = 'draftspace-onboarding-complete'
 const REVIEWER_SESSION_KEY = 'draftspace-reviewer-session'
@@ -131,6 +206,216 @@ const markOnboardingComplete = (email) => {
   window.localStorage.setItem(ONBOARDING_STORAGE_KEY, JSON.stringify([...current, normalizedEmail]))
 }
 
+const renderDraftSegments = (draft, highlights) => {
+  if (!draft) return []
+
+  const safeDraft = String(draft)
+  const sortedHighlights = normalizeSubmissionHighlights(highlights || []).filter((item) => {
+    if (!item || item.start_offset == null || item.end_offset == null) return false
+    if (item.start_offset >= item.end_offset) return false
+    return item.end_offset <= safeDraft.length
+  })
+
+  const segments = []
+  let cursor = 0
+
+  sortedHighlights.forEach((highlight) => {
+    const start = Number(highlight.start_offset)
+    const end = Number(highlight.end_offset)
+
+    if (start > cursor) {
+      segments.push({ type: 'text', text: safeDraft.slice(cursor, start), key: `text-${cursor}-${start}` })
+    }
+
+    if (start < end) {
+      const text = safeDraft.slice(start, end)
+      if (text) {
+        segments.push({ type: 'highlight', text, highlight, key: `highlight-${highlight.id}` })
+      }
+    }
+
+    cursor = Math.max(cursor, end)
+  })
+
+  if (cursor < safeDraft.length) {
+    segments.push({ type: 'text', text: safeDraft.slice(cursor), key: `text-${cursor}-${safeDraft.length}` })
+  }
+
+  return segments
+}
+
+function SubmissionDraftViewer({
+  submission,
+  isReviewer,
+  selectionToolbar,
+  highlightEditor,
+  highlightFlashSectionId,
+  onSelectionReady,
+  onSelectionClear,
+  onHighlightClick,
+  onHighlightAction,
+  onHighlightRemove,
+}) {
+  const rootRef = useRef(null)
+
+  const handleMouseUp = () => {
+    if (!isReviewer) return
+    const selection = window.getSelection()
+    if (!selection || selection.rangeCount === 0) return
+
+    const selectedText = selection.toString().trim()
+    if (!selectedText) {
+      onSelectionClear()
+      return
+    }
+
+    const root = rootRef.current
+    if (!root || (!root.contains(selection.anchorNode) && !root.contains(selection.focusNode))) {
+      onSelectionClear()
+      return
+    }
+
+    const range = selection.getRangeAt(0)
+    const rect = range.getBoundingClientRect()
+    const rootRect = root.getBoundingClientRect()
+
+    onSelectionReady({
+      top: rect.top - rootRect.top - 16,
+      left: rect.left - rootRect.left + rect.width / 2,
+      range: range.cloneRange(),
+      selectedText,
+    })
+  }
+
+  return (
+    <div
+      ref={rootRef}
+      className={`draft-viewer ${isReviewer ? 'reviewer-mode' : ''}`} 
+      id={`draft-viewer-${submission?.id || 'draft'}`}
+      onMouseUp={handleMouseUp}
+      onMouseLeave={onSelectionClear}
+    >
+      {renderDraftSegments(submission?.draft || '', submission?.highlights || []).map((segment) => {
+        if (segment.type === 'highlight') {
+          const meta = getFeedbackSectionMeta(segment.highlight.section_id)
+          const isFlashing = highlightFlashSectionId === segment.highlight.section_id
+          const handleClick = (event) => {
+            event.stopPropagation()
+            if (!isReviewer) {
+              onHighlightClick(segment.highlight)
+              return
+            }
+            const elementRect = event.currentTarget.getBoundingClientRect()
+            const parentRect = rootRef.current?.getBoundingClientRect()
+            onHighlightAction({
+              highlightId: segment.highlight.id,
+              top: elementRect.top - (parentRect?.top || 0) - 12,
+              left: elementRect.left - (parentRect?.left || 0) + (elementRect.width / 2),
+            })
+          }
+
+          return (
+            <mark
+              key={segment.key}
+              className={`highlight-mark ${isFlashing ? 'flash' : ''}`}
+              style={{ backgroundColor: segment.highlight.color || meta.color, boxShadow: isFlashing ? `0 0 0 2px ${meta.softBorder}` : 'none' }}
+              onClick={handleClick}
+            >
+              {segment.text}
+            </mark>
+          )
+        }
+
+        return <span key={segment.key}>{segment.text}</span>
+      })}
+
+      {selectionToolbar && (
+        <div
+          className="highlight-toolbar"
+          style={{
+            top: selectionToolbar.top,
+            left: selectionToolbar.left,
+          }}
+        >
+          {FEEDBACK_SECTION_ORDER.map((sectionId) => {
+            const meta = getFeedbackSectionMeta(sectionId)
+            return (
+              <button
+                key={sectionId}
+                type="button"
+                className="highlight-swatch"
+                style={{ background: meta.color, borderColor: meta.softBorder }}
+                aria-label={`Highlight as ${meta.label}`}
+                title={meta.label}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  onHighlightAction({
+                    action: 'create',
+                    sectionId,
+                    selectionText: selectionToolbar.selectedText,
+                    range: selectionToolbar.range,
+                  })
+                }}
+              >
+                <span style={{ color: meta.accent }}>{meta.label[0]}</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+
+      {highlightEditor && (
+        <div
+          className="highlight-editor"
+          style={{
+            top: highlightEditor.top,
+            left: highlightEditor.left,
+          }}
+        >
+          {FEEDBACK_SECTION_ORDER.map((sectionId) => {
+            const meta = getFeedbackSectionMeta(sectionId)
+            return (
+              <button
+                key={`${highlightEditor.highlightId}-${sectionId}`}
+                type="button"
+                className="highlight-swatch small"
+                style={{ background: meta.color, borderColor: meta.softBorder }}
+                title={`Move to ${meta.label}`}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  onHighlightAction({
+                    action: 'recolor',
+                    highlightId: highlightEditor.highlightId,
+                    sectionId,
+                  })
+                }}
+              >
+                <span style={{ color: meta.accent }}>{meta.label[0]}</span>
+              </button>
+            )
+          })}
+          <button
+            type="button"
+            className="highlight-remove"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              onHighlightRemove(highlightEditor.highlightId)
+            }}
+          >
+            Remove
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // Note: reviewer authorization is handled server-side via Supabase Edge Function.
 // The old VITE_APPROVED_REVIEWER_EMAILS client-side whitelist was removed.
 
@@ -168,6 +453,9 @@ function App() {
     voice: '',
     next: '',
   })
+  const [selectionToolbar, setSelectionToolbar] = useState(null)
+  const [highlightEditor, setHighlightEditor] = useState(null)
+  const [highlightFlashSectionId, setHighlightFlashSectionId] = useState(null)
   const [chatMessages, setChatMessages] = useState([])
   const [chatDraft, setChatDraft] = useState('')
   const [chatModalOpen, setChatModalOpen] = useState(false)
@@ -198,6 +486,16 @@ function App() {
   const activeChatSubmission = useMemo(
     () => submissions.find((item) => item.id === chatThreadSubmissionId) ?? null,
     [chatThreadSubmissionId, submissions],
+  )
+
+  const selectedSubmissionHighlights = useMemo(
+    () => normalizeSubmissionHighlights(selectedSubmission?.highlights || []),
+    [selectedSubmission],
+  )
+
+  const reviewerSelectedSubmissionHighlights = useMemo(
+    () => normalizeSubmissionHighlights(reviewerSelectedSubmission?.highlights || []),
+    [reviewerSelectedSubmission],
   )
 
   const notificationRef = useRef(null)
@@ -616,6 +914,7 @@ function App() {
       reviewStatus: row.review_status,
       responseTime: row.response_time,
       feedback: row.feedback || null,
+      highlights: normalizeSubmissionHighlights(row.highlights || []),
       comments: row.comments || [],
       questionReplies: row.question_replies || [],
       userId: row.user_id,
@@ -1126,6 +1425,7 @@ function App() {
             reviewStatus: inserted.review_status,
             responseTime: inserted.response_time,
             feedback: inserted.feedback || null,
+            highlights: normalizeSubmissionHighlights(inserted.highlights || []),
             comments: inserted.comments || [],
             questionReplies: inserted.question_replies || [],
             userId: inserted.user_id,
@@ -1260,6 +1560,161 @@ function App() {
     }
   }
 
+  const saveSubmissionHighlights = async (submissionId, highlights) => {
+    if (!submissionId || !auth?.currentUser) {
+      return null
+    }
+
+    const saveUrl = import.meta.env.VITE_UPDATE_SUBMISSION_HIGHLIGHTS_URL
+    if (!saveUrl) {
+      setReviewNotice('Highlight save endpoint not configured.')
+      return null
+    }
+
+    try {
+      const idToken = await auth.currentUser.getIdToken()
+      const resp = await fetch(saveUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          submission_id: submissionId,
+          highlights,
+        }),
+      })
+
+      const text = await resp.text()
+      let data = null
+      try { data = JSON.parse(text) } catch (e) { data = text }
+
+      if (!resp.ok) {
+        console.error('update-submission-highlights failed', resp.status, data)
+        setReviewNotice('Unable to save the highlight. Please try again.')
+        return null
+      }
+
+      const nextHighlights = normalizeSubmissionHighlights(data?.highlights || highlights)
+      setSubmissions((current) => current.map((s) => (s.id === submissionId ? { ...s, highlights: nextHighlights } : s)))
+      return nextHighlights
+    } catch (err) {
+      console.error('Error saving highlights', err)
+      setReviewNotice('Unable to save the highlight. Please try again.')
+      return null
+    }
+  }
+
+  const openFeedbackSection = (sectionId) => {
+    const targetSection = sectionId || 'overall'
+    const cardId = `feedback-card-${targetSection}`
+    const card = document.getElementById(cardId)
+    if (!card) return
+
+    card.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    setHighlightFlashSectionId(targetSection)
+    window.setTimeout(() => setHighlightFlashSectionId(null), 1200)
+  }
+
+  const handleHighlightAction = async ({ action, highlightId, sectionId, selectionText, range, top, left }) => {
+    const activeSubmission = reviewerSelectedSubmission || selectedSubmission
+    if (!activeSubmission) return
+
+    const currentHighlights = normalizeSubmissionHighlights(activeSubmission.highlights || [])
+
+    if (action === 'create' && selectionText && range) {
+      const container = document.getElementById(`draft-viewer-${activeSubmission.id}`)
+      if (!container) return
+
+      const startRange = document.createRange()
+      const endRange = document.createRange()
+      startRange.selectNodeContents(container)
+      endRange.selectNodeContents(container)
+      startRange.setEnd(range.startContainer, range.startOffset)
+      endRange.setEnd(range.endContainer, range.endOffset)
+
+      const startOffset = startRange.toString().length
+      const endOffset = endRange.toString().length
+      const nextText = activeSubmission.draft.slice(startOffset, endOffset)
+      if (!nextText || nextText.trim() !== selectionText.trim()) {
+        setSelectionToolbar(null)
+        setReviewNotice('Unable to anchor this highlight to the draft text. Please try a different selection.')
+        return
+      }
+
+      const nextHighlight = {
+        id: `highlight-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        section_id: sectionId,
+        section: sectionId,
+        start_offset: startOffset,
+        end_offset: endOffset,
+        selected_text: selectionText,
+        quote: selectionText,
+        color: getFeedbackSectionMeta(sectionId).color,
+      }
+
+      const nextHighlights = [...currentHighlights, nextHighlight]
+      const savedHighlights = await saveSubmissionHighlights(activeSubmission.id, nextHighlights)
+      if (savedHighlights) {
+        setSelectionToolbar(null)
+        setHighlightEditor(null)
+        setReviewNotice('')
+      }
+      return
+    }
+
+    if (highlightId && !action) {
+      setSelectionToolbar(null)
+      setHighlightEditor({
+        highlightId,
+        top: top || 0,
+        left: left || 0,
+      })
+      return
+    }
+
+    if (action === 'recolor' && highlightId) {
+      const targetHighlight = currentHighlights.find((item) => item.id === highlightId)
+      if (!targetHighlight) return
+
+      const nextHighlights = currentHighlights.map((item) => (item.id === highlightId ? {
+        ...item,
+        section_id: sectionId,
+        section: sectionId,
+        color: getFeedbackSectionMeta(sectionId).color,
+      } : item))
+
+      const savedHighlights = await saveSubmissionHighlights(activeSubmission.id, nextHighlights)
+      if (savedHighlights) {
+        setHighlightEditor(null)
+        setReviewNotice('')
+      }
+      return
+    }
+
+    if (action === 'create' && top != null && left != null) {
+      setSelectionToolbar({ top, left, selectedText: selectionText || '', range, source: 'manual' })
+    }
+  }
+
+  const handleHighlightRemove = async (highlightId) => {
+    const activeSubmission = reviewerSelectedSubmission || selectedSubmission
+    if (!activeSubmission) return
+
+    const currentHighlights = normalizeSubmissionHighlights(activeSubmission.highlights || [])
+    const nextHighlights = currentHighlights.filter((item) => item.id !== highlightId)
+    const savedHighlights = await saveSubmissionHighlights(activeSubmission.id, nextHighlights)
+    if (savedHighlights) {
+      setHighlightEditor(null)
+      setReviewNotice('')
+    }
+  }
+
+  const handleHighlightClick = (highlight) => {
+    const sectionId = highlight.section_id || highlight.section || 'overall'
+    openFeedbackSection(sectionId)
+  }
+
   const sendReviewerFeedback = () => {
     if (!reviewerSelectedSubmission) return
 
@@ -1334,6 +1789,7 @@ function App() {
           reviewStatus: updatedRow.review_status,
           responseTime: updatedRow.response_time,
           feedback: updatedRow.feedback || null,
+          highlights: normalizeSubmissionHighlights(updatedRow.highlights || []),
           comments: updatedRow.comments || [],
           questionReplies: updatedRow.question_replies || [],
           userId: updatedRow.user_id,
@@ -1834,7 +2290,18 @@ function App() {
 
               <div className="essay-panel">
                 <h3>Your draft</h3>
-                <p>{selectedSubmission.draft}</p>
+                <SubmissionDraftViewer
+                  submission={selectedSubmission}
+                  isReviewer={false}
+                  selectionToolbar={null}
+                  highlightEditor={null}
+                  highlightFlashSectionId={highlightFlashSectionId}
+                  onSelectionReady={() => {}}
+                  onSelectionClear={() => setSelectionToolbar(null)}
+                  onHighlightClick={handleHighlightClick}
+                  onHighlightAction={handleHighlightAction}
+                  onHighlightRemove={handleHighlightRemove}
+                />
               </div>
 
               <div className="comment-stack">
@@ -1848,22 +2315,28 @@ function App() {
             </div>
 
             <div className="feedback-sidebar">
-              <div className="card card-soft">
-                <h3>Overall impression</h3>
-                <p>{selectedSubmission.feedback?.overall ?? 'Your reviewer will leave thoughtful notes here once the feedback is ready.'}</p>
-              </div>
-              <div className="card card-soft">
-                <h3>Strengths</h3>
-                <p>{selectedSubmission.feedback?.strengths ?? 'A warm note about what is already working.'}</p>
-              </div>
-              <div className="card card-soft">
-                <h3>Your voice</h3>
-                <p>{selectedSubmission.feedback?.voice ?? 'A reminder of what makes your writing feel like you.'}</p>
-              </div>
-              <div className="card card-soft">
-                <h3>Next steps</h3>
-                <p>{selectedSubmission.feedback?.next ?? 'A few gentle questions to keep the conversation going.'}</p>
-              </div>
+              {FEEDBACK_SECTION_ORDER.map((sectionId) => {
+                const meta = getFeedbackSectionMeta(sectionId)
+                const content = selectedSubmission.feedback?.[sectionId] || {
+                  overall: 'Your reviewer will leave thoughtful notes here once the feedback is ready.',
+                  strengths: 'A warm note about what is already working.',
+                  areas: 'A few thoughtful suggestions for where to go next.',
+                  voice: 'A reminder of what makes your writing feel like you.',
+                  next: 'A few gentle questions to keep the conversation going.',
+                }[sectionId]
+
+                return (
+                  <div
+                    key={sectionId}
+                    id={`feedback-card-${sectionId}`}
+                    className={`card card-soft feedback-card ${highlightFlashSectionId === sectionId ? 'flash' : ''}`}
+                    style={{ background: meta.color, borderColor: meta.softBorder }}
+                  >
+                    <h3 style={{ color: meta.accent }}>{meta.label}</h3>
+                    <p>{content}</p>
+                  </div>
+                )
+              })}
               <div className="card card-soft">
                 <h3>Message your reviewer</h3>
                 <p>Ask a quick follow-up without leaving this page.</p>
@@ -2006,7 +2479,18 @@ function App() {
                     <div className="reviewer-body">
                       <div className="essay-panel">
                         <h4>Student draft</h4>
-                        <p>{reviewerSelectedSubmission.draft}</p>
+                        <SubmissionDraftViewer
+                          submission={reviewerSelectedSubmission}
+                          isReviewer
+                          selectionToolbar={selectionToolbar}
+                          highlightEditor={highlightEditor}
+                          highlightFlashSectionId={highlightFlashSectionId}
+                          onSelectionReady={(tool) => setSelectionToolbar(tool)}
+                          onSelectionClear={() => setSelectionToolbar(null)}
+                          onHighlightClick={handleHighlightClick}
+                          onHighlightAction={handleHighlightAction}
+                          onHighlightRemove={handleHighlightRemove}
+                        />
                       </div>
                       <div className="card card-soft">
                         <h4>Additional Concerns</h4>
@@ -2015,74 +2499,33 @@ function App() {
                           {reviewerSelectedSubmission.reviewStatus === 'Feedback ready' ? (
                             <div className="feedback-readonly">
                               <h4>Reviewer feedback (submitted)</h4>
-                              <div className="read-block">
-                                <h5>Overall impression</h5>
-                                <p>{reviewerSelectedSubmission.feedback?.overall || reviewerFeedback.overall || '—'}</p>
-                              </div>
-                              <div className="read-block">
-                                <h5>Strengths</h5>
-                                <p>{reviewerSelectedSubmission.feedback?.strengths || reviewerFeedback.strengths || '—'}</p>
-                              </div>
-                              <div className="read-block">
-                                <h5>Areas to improve</h5>
-                                <p>{reviewerSelectedSubmission.feedback?.areas || reviewerFeedback.areas || '—'}</p>
-                              </div>
-                              <div className="read-block">
-                                <h5>Your voice section</h5>
-                                <p>{reviewerSelectedSubmission.feedback?.voice || reviewerFeedback.voice || '—'}</p>
-                              </div>
-                              <div className="read-block">
-                                <h5>Next steps</h5>
-                                <p>{reviewerSelectedSubmission.feedback?.next || reviewerFeedback.next || '—'}</p>
-                              </div>
+                              {FEEDBACK_SECTION_ORDER.map((sectionId) => {
+                                const meta = getFeedbackSectionMeta(sectionId)
+                                const content = reviewerSelectedSubmission.feedback?.[sectionId] || reviewerFeedback[sectionId] || '—'
+                                return (
+                                  <div key={sectionId} id={`feedback-card-${sectionId}`} className={`read-block ${highlightFlashSectionId === sectionId ? 'flash' : ''}`} style={{ background: meta.color, borderColor: meta.softBorder }}>
+                                    <h5 style={{ color: meta.accent }}>{meta.label}</h5>
+                                    <p>{content}</p>
+                                  </div>
+                                )
+                              })}
                             </div>
                           ) : (
                             <div className="feedback-form">
-                              <label className="field">
-                                <span>Overall impression</span>
-                                <textarea
-                                  rows="3"
-                                  value={reviewerFeedback.overall}
-                                  onChange={(event) => setReviewerFeedback((current) => ({ ...current, overall: event.target.value }))}
-                                  placeholder="What stood out?"
-                                />
-                              </label>
-                              <label className="field">
-                                <span>Strengths</span>
-                                <textarea
-                                  rows="3"
-                                  value={reviewerFeedback.strengths}
-                                  onChange={(event) => setReviewerFeedback((current) => ({ ...current, strengths: event.target.value }))}
-                                  placeholder="Name the places where the voice feels especially alive."
-                                />
-                              </label>
-                              <label className="field">
-                                <span>Areas to improve</span>
-                                <textarea
-                                  rows="3"
-                                  value={reviewerFeedback.areas}
-                                  onChange={(event) => setReviewerFeedback((current) => ({ ...current, areas: event.target.value }))}
-                                  placeholder="Suggest one or two thoughtful next steps."
-                                />
-                              </label>
-                              <label className="field">
-                                <span>Your voice section</span>
-                                <textarea
-                                  rows="3"
-                                  value={reviewerFeedback.voice}
-                                  onChange={(event) => setReviewerFeedback((current) => ({ ...current, voice: event.target.value }))}
-                                  placeholder="Call out a moment that feels unmistakably the student’s."
-                                />
-                              </label>
-                              <label className="field">
-                                <span>Next steps</span>
-                                <textarea
-                                  rows="3"
-                                  value={reviewerFeedback.next}
-                                  onChange={(event) => setReviewerFeedback((current) => ({ ...current, next: event.target.value }))}
-                                  placeholder="Ask one or two guiding questions."
-                                />
-                              </label>
+                              {FEEDBACK_SECTION_ORDER.map((sectionId) => {
+                                const meta = getFeedbackSectionMeta(sectionId)
+                                return (
+                                  <label key={sectionId} id={`feedback-card-${sectionId}`} className={`field feedback-section-card ${highlightFlashSectionId === sectionId ? 'flash' : ''}`} style={{ background: meta.color, borderColor: meta.softBorder }}>
+                                    <span style={{ color: meta.accent }}>{meta.label}</span>
+                                    <textarea
+                                      rows="3"
+                                      value={reviewerFeedback[sectionId] || ''}
+                                      onChange={(event) => setReviewerFeedback((current) => ({ ...current, [sectionId]: event.target.value }))}
+                                      placeholder={meta.label === 'Overall impression' ? 'What stood out?' : `Add a note for ${meta.label.toLowerCase()}.`}
+                                    />
+                                  </label>
+                                )
+                              })}
                               <button type="button" className="button primary" onClick={sendReviewerFeedback}>
                                 Send feedback
                               </button>
