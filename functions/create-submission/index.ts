@@ -6,12 +6,13 @@
 // - FIREBASE_PROJECT_ID
 // - ALLOWED_ORIGINS (optional)
 
+import { getCorsHeaders, getCorsOptionsResponse } from '../_shared/cors.ts'
+
 let joseModule: any = null
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || ''
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
 const FIREBASE_PROJECT_ID = Deno.env.get('FIREBASE_PROJECT_ID') || ''
-const ALLOWED_ORIGINS = Deno.env.get('ALLOWED_ORIGINS') || ''
 
 const JWKS_URL = 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com'
 
@@ -78,23 +79,23 @@ async function verifyIdToken(idToken: string) {
 
 // Handler
 Deno.serve(async (req: Request) => {
-  try {
-    const origin = req.headers.get('origin') || ''
-    const allowedOriginHeader = ALLOWED_ORIGINS ? ALLOWED_ORIGINS : '*'
+  const makeJson = (obj: any, status = 200) => {
+    return new Response(JSON.stringify(obj), {
+      status,
+      headers: {
+        'Content-Type': 'application/json',
+        ...getCorsHeaders(req),
+      },
+    })
+  }
 
+  try {
     if (req.method === 'OPTIONS') {
-      return new Response(null, {
-        status: 204,
-        headers: {
-          'Access-Control-Allow-Origin': allowedOriginHeader,
-          'Access-Control-Allow-Methods': 'POST, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-        },
-      })
+      return getCorsOptionsResponse(req)
     }
 
     if (req.method !== 'POST') {
-      return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers: { 'Content-Type': 'application/json' } })
+      return makeJson({ error: 'Method not allowed' }, 405)
     }
 
     // Read body
@@ -123,7 +124,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (!idToken) {
-      return new Response(JSON.stringify({ error: 'Missing idToken' }), { status: 400, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': allowedOriginHeader } })
+      return new Response(JSON.stringify({ error: 'Missing idToken' }), { status: 400, headers: { 'Content-Type': 'application/json', ...getCorsHeaders(req) } })
     }
 
     let payload: any
@@ -132,23 +133,23 @@ Deno.serve(async (req: Request) => {
     } catch (err: any) {
       // Log verification error safely (name/message only)
       console.log('create-submission: firebase token verification failed', { name: err?.name || null, message: err?.message || null })
-      return new Response(JSON.stringify({ error: 'Invalid token' }), { status: 401, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': allowedOriginHeader } })
+      return new Response(JSON.stringify({ error: 'Invalid token' }), { status: 401, headers: { 'Content-Type': 'application/json', ...getCorsHeaders(req) } })
     }
 
     const uid = payload?.sub
     if (!uid) {
-      return new Response(JSON.stringify({ error: 'Invalid token payload' }), { status: 400, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': allowedOriginHeader } })
+      return new Response(JSON.stringify({ error: 'Invalid token payload' }), { status: 400, headers: { 'Content-Type': 'application/json', ...getCorsHeaders(req) } })
     }
 
     if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
       console.error('Supabase config missing in Edge Function')
-      return new Response(JSON.stringify({ error: 'Server misconfigured' }), { status: 500, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': allowedOriginHeader } })
+      return new Response(JSON.stringify({ error: 'Server misconfigured' }), { status: 500, headers: { 'Content-Type': 'application/json', ...getCorsHeaders(req) } })
     }
 
     // Expect submission payload in body.submission or body
     const submission = body?.submission || body
     if (!submission || typeof submission !== 'object') {
-      return new Response(JSON.stringify({ error: 'Missing submission payload' }), { status: 400, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': allowedOriginHeader } })
+      return new Response(JSON.stringify({ error: 'Missing submission payload' }), { status: 400, headers: { 'Content-Type': 'application/json', ...getCorsHeaders(req) } })
     }
 
     // Build row server-side; ignore any client-supplied user_id
@@ -185,15 +186,15 @@ Deno.serve(async (req: Request) => {
 
     if (!res.ok) {
       console.error('Supabase insert failed', res.status, text)
-      return new Response(JSON.stringify({ error: 'Upstream insert failed', status: res.status, body: data }), { status: 502, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': allowedOriginHeader } })
+      return new Response(JSON.stringify({ error: 'Upstream insert failed', status: res.status, body: data }), { status: 502, headers: { 'Content-Type': 'application/json', ...getCorsHeaders(req) } })
     }
 
     // data should be an array with the inserted row
     const inserted = Array.isArray(data) ? data[0] : data
 
-    return new Response(JSON.stringify({ submission: inserted }), { status: 201, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': allowedOriginHeader } })
+    return new Response(JSON.stringify({ submission: inserted }), { status: 201, headers: { 'Content-Type': 'application/json', ...getCorsHeaders(req) } })
   } catch (err) {
     console.error('Unexpected error in submit-submission', err)
-    return new Response(JSON.stringify({ error: 'Internal error' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+    return new Response(JSON.stringify({ error: 'Internal error' }), { status: 500, headers: { 'Content-Type': 'application/json', ...getCorsHeaders(req) } })
   }
 })

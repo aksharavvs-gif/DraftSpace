@@ -6,12 +6,13 @@
 // - FIREBASE_PROJECT_ID
 // - ALLOWED_ORIGINS (optional)
 
+import { getCorsHeaders, getCorsOptionsResponse } from '../_shared/cors.ts'
+
 let joseModule: any = null
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || ''
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
 const FIREBASE_PROJECT_ID = Deno.env.get('FIREBASE_PROJECT_ID') || ''
-const ALLOWED_ORIGINS = (Deno.env.get('ALLOWED_ORIGINS') || '')
 
 const JWKS_URL = 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com'
 
@@ -73,22 +74,19 @@ async function verifyIdToken(idToken: string) {
   return payload
 }
 
-const makeJson = (obj: any, status = 200) => {
-  const allowedOriginHeader = ALLOWED_ORIGINS ? ALLOWED_ORIGINS : '*'
-  return new Response(JSON.stringify(obj), {
-    status,
-    headers: {
-      'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': allowedOriginHeader,
-      'Access-Control-Allow-Methods': 'POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Authorization, Content-Type',
-    },
-  })
-}
-
 Deno.serve(async (req: Request) => {
+  const makeJson = (obj: any, status = 200) => {
+    return new Response(JSON.stringify(obj), {
+      status,
+      headers: {
+        'Content-Type': 'application/json',
+        ...getCorsHeaders(req),
+      },
+    })
+  }
+
   try {
-    if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: { 'Access-Control-Allow-Origin': ALLOWED_ORIGINS || '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Authorization, Content-Type' } })
+    if (req.method === 'OPTIONS') return getCorsOptionsResponse(req)
 
     if (req.method !== 'POST') return makeJson({ error: 'Method not allowed' }, 405)
 

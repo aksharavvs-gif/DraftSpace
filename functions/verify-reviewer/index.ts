@@ -1,3 +1,5 @@
+import { getCorsHeaders, getCorsOptionsResponse } from '../_shared/cors.ts'
+
 // jose will be dynamically imported inside the verification path to avoid blocking
 // module evaluation during cold-start (improves OPTIONS preflight latency).
 let joseModule: any = null
@@ -12,7 +14,6 @@ let joseModule: any = null
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || ''
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
 const FIREBASE_PROJECT_ID = Deno.env.get('FIREBASE_PROJECT_ID') || ''
-const ALLOWED_ORIGINS = (Deno.env.get('ALLOWED_ORIGINS') || '')
 
 const JWKS_URL = 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com'
 
@@ -95,18 +96,8 @@ async function verifyIdToken(idToken: string) {
 // Use Deno.serve to match Supabase Edge Function handler format.
 Deno.serve(async (req: Request) => {
   try {
-    const origin = req.headers.get('origin') || ''
-    const allowedOriginHeader = ALLOWED_ORIGINS ? ALLOWED_ORIGINS : '*'
-
     if (req.method === 'OPTIONS') {
-      return new Response(null, {
-        status: 204,
-        headers: {
-          'Access-Control-Allow-Origin': allowedOriginHeader,
-          'Access-Control-Allow-Methods': 'POST, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-        },
-      })
+      return getCorsOptionsResponse(req)
     }
 
     const body = await req.json().catch(() => null)
@@ -123,7 +114,7 @@ Deno.serve(async (req: Request) => {
     if (!idToken) {
       return new Response(JSON.stringify({ error: 'Missing idToken' }), {
         status: 400,
-        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': allowedOriginHeader },
+        headers: { 'Content-Type': 'application/json', ...getCorsHeaders(req) },
       })
     }
 
@@ -136,7 +127,7 @@ Deno.serve(async (req: Request) => {
       console.error('Token verification failed', err)
       return new Response(JSON.stringify({ isReviewer: false, reason: 'Invalid token' }), {
         status: 401,
-        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': allowedOriginHeader },
+        headers: { 'Content-Type': 'application/json', ...getCorsHeaders(req) },
       })
     }
 
@@ -144,7 +135,7 @@ Deno.serve(async (req: Request) => {
     if (!uid) {
       return new Response(JSON.stringify({ isReviewer: false }), {
         status: 400,
-        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': allowedOriginHeader },
+        headers: { 'Content-Type': 'application/json', ...getCorsHeaders(req) },
       })
     }
 
@@ -152,7 +143,7 @@ Deno.serve(async (req: Request) => {
       console.error('Supabase config missing in Edge Function')
       return new Response(JSON.stringify({ isReviewer: false, reason: 'Server misconfigured' }), {
         status: 500,
-        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': allowedOriginHeader },
+        headers: { 'Content-Type': 'application/json', ...getCorsHeaders(req) },
       })
     }
 
@@ -172,7 +163,7 @@ Deno.serve(async (req: Request) => {
       console.error('Supabase query failed', await res.text())
       return new Response(JSON.stringify({ isReviewer: false, reason: 'Upstream error' }), {
         status: 502,
-        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': allowedOriginHeader },
+        headers: { 'Content-Type': 'application/json', ...getCorsHeaders(req) },
       })
     }
 
@@ -181,19 +172,19 @@ Deno.serve(async (req: Request) => {
       const role = data[0].role || null
       return new Response(JSON.stringify({ isReviewer: true, role }), {
         status: 200,
-        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': allowedOriginHeader },
+        headers: { 'Content-Type': 'application/json', ...getCorsHeaders(req) },
       })
     }
 
     return new Response(JSON.stringify({ isReviewer: false }), {
       status: 200,
-      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': allowedOriginHeader },
+      headers: { 'Content-Type': 'application/json', ...getCorsHeaders(req) },
     })
   } catch (err) {
     console.error('Unexpected error in verify-reviewer', err)
     return new Response(JSON.stringify({ isReviewer: false, reason: 'Internal error' }), {
       status: 500,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...getCorsHeaders(req) },
     })
   }
 })
