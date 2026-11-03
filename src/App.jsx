@@ -646,6 +646,18 @@ function App() {
     [submissions, submissionClock],
   )
 
+  const submissionLimitNotice = useMemo(() => {
+    if (submissionLimitState.dailyLimitReached) {
+      return `You've reached your daily submission limit. You can submit again in ${formatDurationForMessage(submissionLimitState.dailyResetRemainingMs)}.`
+    }
+
+    if (submissionLimitState.cooldownRemainingMs > 0) {
+      return `Please wait ${formatDurationForMessage(submissionLimitState.cooldownRemainingMs)} before submitting again.`
+    }
+
+    return ''
+  }, [submissionLimitState])
+
   const submissionWordCount = useMemo(() => countWords(draftForm.draft), [draftForm.draft])
   const [submissionButtonShake, setSubmissionButtonShake] = useState(false)
 
@@ -2310,6 +2322,12 @@ function App() {
               </div>
             </div>
 
+            {submissionLimitNotice && (
+              <div className="chat-limit-banner" style={{ marginBottom: '18px' }}>
+                {submissionLimitNotice}
+              </div>
+            )}
+
             {submissions.length === 0 ? (
               <div className="empty-state">
                 <h3>Your writing home is ready.</h3>
@@ -2363,6 +2381,11 @@ function App() {
             <p className="flow-copy">
               Paste your work here and give it a title. A thoughtful reviewer will see the piece as you intended.
             </p>
+            {submissionLimitNotice && (
+              <div className="chat-limit-banner" style={{ marginBottom: '14px' }}>
+                {submissionLimitNotice}
+              </div>
+            )}
             <form className="stacked-form" onSubmit={(event) => event.preventDefault()}>
               <label className="field">
                 <span>What is this piece called?</span>
@@ -2406,6 +2429,11 @@ function App() {
             <p className="flow-copy">
               Select one or more categories so the reviewer can read with the right context.
             </p>
+            {submissionLimitNotice && (
+              <div className="chat-limit-banner" style={{ marginBottom: '14px' }}>
+                {submissionLimitNotice}
+              </div>
+            )}
             <div className="chip-grid">
               {writingOptions.map((option) => (
                 <button
@@ -2441,6 +2469,11 @@ function App() {
             <p className="flow-copy">
               This part is optional. Add anything that might help your reviewer understand your intention.
             </p>
+            {submissionLimitNotice && (
+              <div className="chat-limit-banner" style={{ marginBottom: '14px' }}>
+                {submissionLimitNotice}
+              </div>
+            )}
             <form className="stacked-form" onSubmit={(event) => event.preventDefault()}>
               <label className="field">
                 <span>What are you most worried about with this piece?</span>
