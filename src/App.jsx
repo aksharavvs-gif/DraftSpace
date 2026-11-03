@@ -177,7 +177,7 @@ const normalizeWritingType = (raw) => {
 }
 
 const MAX_SUBMISSION_WORD_COUNT = 3000
-const DAILY_SUBMISSION_LIMIT = 10
+const DAILY_SUBMISSION_LIMIT = 5
 const SUBMISSION_COOLDOWN_MS = 30 * 60 * 1000
 const DAILY_SUBMISSION_WINDOW_MS = 24 * 60 * 60 * 1000
 
@@ -539,6 +539,7 @@ function App() {
   const [feedbackSubmittedMessage, setFeedbackSubmittedMessage] = useState('')
   const [authContext, setAuthContext] = useState('student')
   const [submissionClock, setSubmissionClock] = useState(Date.now())
+  const [chatRateLimitUntil, setChatRateLimitUntil] = useState(null)
   const submissionButtonShakeTimeoutRef = useRef(null)
 
   const selectedSubmission = useMemo(
@@ -652,6 +653,18 @@ function App() {
     const tick = setInterval(() => setSubmissionClock(Date.now()), 1000)
     return () => clearInterval(tick)
   }, [])
+
+  useEffect(() => {
+    if (!chatRateLimitUntil) return
+
+    const tick = setInterval(() => {
+      if (Date.now() >= chatRateLimitUntil) {
+        setChatRateLimitUntil(null)
+      }
+    }, 1000)
+
+    return () => clearInterval(tick)
+  }, [chatRateLimitUntil])
 
   const loadNotifications = async () => {
     if (!authResolved || !auth?.currentUser?.uid) {
@@ -894,7 +907,8 @@ function App() {
 
   const sendChatMessage = async (event) => {
     event.preventDefault()
-    if (!chatDraft.trim() || !chatThreadSubmissionId) return
+    const trimmedDraft = chatDraft.trim()
+    if (!trimmedDraft || !chatThreadSubmissionId) return
 
     const sendUrl = import.meta.env.VITE_SEND_MESSAGE_URL
     if (!sendUrl) {
@@ -910,19 +924,6 @@ function App() {
     setChatLoading(true)
     setChatError('')
 
-    const optimisticMessage = {
-      id: `optimistic-${Date.now()}`,
-      from: authContext === 'reviewer' ? 'reviewer' : 'student',
-      sender_name: authContext === 'reviewer'
-        ? 'Reviewer'
-        : resolveFirstName(auth?.currentUser?.displayName || profile.name, 'Student'),
-      text: chatDraft.trim(),
-      createdAt: new Date().toISOString(),
-    }
-
-    setChatMessages((current) => [...current, optimisticMessage])
-    setChatDraft('')
-
     try {
       const idToken = await auth.currentUser.getIdToken()
       const response = await fetch(sendUrl, {
@@ -933,7 +934,7 @@ function App() {
         },
         body: JSON.stringify({
           submission_id: chatThreadSubmissionId,
-          message: optimisticMessage.text,
+          message: trimmedDraft,
           sender_name: authContext === 'reviewer'
             ? 'Reviewer'
             : resolveFirstName(auth?.currentUser?.displayName || profile.name, 'Student'),
@@ -949,24 +950,38 @@ function App() {
       }
 
       if (!response.ok) {
+        const retryAfterMs = Number(payload?.retry_after_ms || 0)
+        const rateLimitCode = payload?.code === 'rate_limited' || payload?.code === 'message_rate_limited'
+        const rawMessage = typeof payload?.message === 'string' ? payload.message : ''
+        const parsedRetryFromMessage = rawMessage.startsWith('rate_limited:') ? Number(rawMessage.split(':')[1] || 0) : 0
+        const resolvedRetryMs = retryAfterMs > 0 ? retryAfterMs : parsedRetryFromMessage
+
+        if (rateLimitCode || rawMessage.startsWith('rate_limited:')) {
+          const waitMs = resolvedRetryMs > 0 ? resolvedRetryMs : 60000
+          const expiration = Date.now() + waitMs
+          setChatRateLimitUntil(expiration)
+          const waitText = formatDurationForMessage(Math.max(0, expiration - Date.now()))
+          setChatError(`You've reached the messaging limit. Please wait ${waitText} before sending another message.`)
+          setChatLoading(false)
+          return
+        }
+
         throw new Error(payload?.error || 'Unable to send message.')
       }
 
       const saved = payload?.message || null
       if (saved) {
-        setChatMessages((current) => current.map((message) => (
-          message.id === optimisticMessage.id
-            ? {
-                id: saved.id || `${saved.submission_id}-${saved.created_at || Date.now()}`,
-                from: saved.sender_role === 'reviewer' ? 'reviewer' : 'student',
-                senderName: senderLabelFromMessage(saved),
-                text: saved.message || '',
-                createdAt: saved.created_at || new Date().toISOString(),
-              }
-            : message
-        )))
+        setChatMessages((current) => [...current, {
+          id: saved.id || `${saved.submission_id}-${saved.created_at || Date.now()}`,
+          from: saved.sender_role === 'reviewer' ? 'reviewer' : 'student',
+          senderName: senderLabelFromMessage(saved),
+          text: saved.message || '',
+          createdAt: saved.created_at || new Date().toISOString(),
+        }])
       }
 
+      setChatDraft('')
+      setChatRateLimitUntil(null)
       console.log('sendChatMessage: message saved; reloading notifications for uid=', auth?.currentUser?.uid ?? null, 'context=', authContext)
       await loadNotifications()
     } catch (err) {
@@ -2769,12 +2784,18 @@ function App() {
               })}
             </div>
             <form className="chat-form" onSubmit={sendChatMessage}>
+              {chatRateLimitUntil && (
+                <div className="chat-limit-banner">
+                  You've reached the messaging limit. Please wait {formatDurationForMessage(Math.max(0, chatRateLimitUntil - Date.now()))} before sending another message.
+                </div>
+              )}
               <input
                 value={chatDraft}
                 onChange={(event) => setChatDraft(event.target.value)}
                 placeholder="Write a message to the student..."
+                disabled={!!chatRateLimitUntil}
               />
-              <button type="submit" className="button primary">
+              <button type="submit" className="button primary" disabled={chatLoading || !chatDraft.trim() || !!chatRateLimitUntil}>
                 Send
               </button>
             </form>
@@ -2819,12 +2840,18 @@ function App() {
               </div>
 
               <form className="chat-form" onSubmit={sendChatMessage}>
+                {chatRateLimitUntil && (
+                  <div className="chat-limit-banner">
+                    You've reached the messaging limit. Please wait {formatDurationForMessage(Math.max(0, chatRateLimitUntil - Date.now()))} before sending another message.
+                  </div>
+                )}
                 <input
                   value={chatDraft}
                   onChange={(event) => setChatDraft(event.target.value)}
                   placeholder={authContext === 'reviewer' ? 'Write a message to the student...' : 'Write a message to your reviewer...'}
+                  disabled={!!chatRateLimitUntil}
                 />
-                <button type="submit" className="button primary" disabled={chatLoading || !chatDraft.trim()}>
+                <button type="submit" className="button primary" disabled={chatLoading || !chatDraft.trim() || !!chatRateLimitUntil}>
                   {chatLoading ? 'Sending...' : 'Send'}
                 </button>
               </form>

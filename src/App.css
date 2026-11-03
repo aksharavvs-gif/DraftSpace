@@ -885,6 +885,16 @@
   margin-bottom: 10px;
 }
 
+.chat-limit-banner {
+  background: rgba(173, 36, 71, 0.08);
+  border: 1px solid rgba(173, 36, 71, 0.18);
+  color: #8b1e3f;
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
 .chat-bubble {
   display: flex;
   flex-direction: column;

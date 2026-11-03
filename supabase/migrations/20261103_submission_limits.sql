@@ -11,7 +11,7 @@ create or replace function public.submit_submission_with_limits(
   p_review_status text default 'Awaiting review',
   p_response_time text default 'Within 72 hours'
 )
-returns public.submissions
+returns setof public.submissions
 language plpgsql
 security definer
 set search_path = public
@@ -45,7 +45,7 @@ begin
   where user_id = p_user_id
     and submitted_at >= v_now - interval '24 hours';
 
-  if v_recent_count >= 10 then
+  if v_recent_count >= 5 then
     raise exception 'Daily submission limit reached.' using errcode = '23514';
   end if;
 

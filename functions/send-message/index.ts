@@ -322,6 +322,14 @@ Deno.serve(async (req: Request) => {
       return makeJson({ error: 'Message is required' }, 400)
     }
 
+    if (messageText.length > 1000) {
+      return makeJson({
+        error: 'Message exceeds the 1,000-character limit.',
+        code: 'message_length_exceeded',
+        message: 'Message exceeds the 1,000-character limit.',
+      }, 400)
+    }
+
     const submissionUrl = `${SUPABASE_URL.replace(/\/$/, '')}/rest/v1/submissions?id=eq.${encodeURIComponent(submissionId)}&select=id,user_id,title`
     const submissionRes = await fetch(submissionUrl, {
       method: 'GET',
@@ -363,49 +371,52 @@ Deno.serve(async (req: Request) => {
       ...(senderName ? { sender_name: senderName } : {}),
     }
 
-    const insertUrl = `${SUPABASE_URL.replace(/\/$/, '')}/rest/v1/messages`
-    const firstAttempt = await fetch(insertUrl, {
+    const rpcUrl = `${SUPABASE_URL.replace(/\/$/, '')}/rest/v1/rpc/insert_message_with_limits`
+    const rpcRes = await fetch(rpcUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         apikey: SUPABASE_SERVICE_ROLE_KEY,
         Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-        Prefer: 'return=representation',
       },
-      body: JSON.stringify([row]),
+      body: JSON.stringify({
+        p_submission_id: submissionId,
+        p_sender_uid: uid,
+        p_sender_role: senderRole,
+        p_message: messageText,
+        p_sender_name: senderName || null,
+      }),
     })
 
+    const rpcText = await rpcRes.text()
     let insertData: any = null
-    let insertRes = firstAttempt
-    let insertText = await insertRes.text()
-    try { insertData = JSON.parse(insertText) } catch (e) { insertData = insertText }
+    try { insertData = JSON.parse(rpcText) } catch (e) { insertData = rpcText }
 
-    if (!insertRes.ok && senderName) {
-      const fallbackRow = {
-        submission_id: submissionId,
-        sender_uid: uid,
-        sender_role: senderRole,
-        message: messageText,
+    if (!rpcRes.ok) {
+      const messageTextFromServer = typeof insertData === 'object' && insertData && typeof insertData.message === 'string'
+        ? insertData.message
+        : typeof insertData === 'string'
+        ? insertData
+        : ''
+
+      const retryMatch = messageTextFromServer.match(/^rate_limited:(\d+)$/)
+      const retryAfterMs = retryMatch ? Number(retryMatch[1] || 0) : 0
+
+      if (retryMatch) {
+        return makeJson({
+          error: 'Message rate limit reached.',
+          code: 'rate_limited',
+          message: `rate_limited:${retryAfterMs}`,
+          retry_after_ms: retryAfterMs,
+        }, 429)
       }
 
-      insertRes = await fetch(insertUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          apikey: SUPABASE_SERVICE_ROLE_KEY,
-          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-          Prefer: 'return=representation',
-        },
-        body: JSON.stringify([fallbackRow]),
-      })
-
-      insertText = await insertRes.text()
-      try { insertData = JSON.parse(insertText) } catch (e) { insertData = insertText }
-    }
-
-    if (!insertRes.ok) {
-      console.error('send-message: insert failed', insertRes.status, insertText)
-      return makeJson({ error: 'Upstream insert failed', details: insertData }, 502)
+      console.error('send-message: insert failed', rpcRes.status, rpcText)
+      return makeJson({
+        error: 'Upstream insert failed',
+        details: insertData,
+        code: 'message_insert_failed',
+      }, 502)
     }
 
     const saved = Array.isArray(insertData) ? insertData[0] : insertData
