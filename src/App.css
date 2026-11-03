@@ -895,6 +895,23 @@
   font-weight: 600;
 }
 
+.chat-toast {
+  position: fixed;
+  top: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 80;
+  background: rgba(139, 30, 63, 0.96);
+  color: white;
+  border-radius: 999px;
+  padding: 12px 18px;
+  box-shadow: 0 12px 30px rgba(90, 37, 60, 0.25);
+  font-size: 0.92rem;
+  font-weight: 700;
+  max-width: min(92vw, 540px);
+  text-align: center;
+}
+
 .chat-bubble {
   display: flex;
   flex-direction: column;

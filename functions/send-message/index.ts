@@ -407,11 +407,16 @@ Deno.serve(async (req: Request) => {
         const retryAfterMs = retryMatch ? Number(retryMatch[1] || 0) : 0
 
         if (retryMatch) {
+          const waitMs = retryAfterMs > 0 ? retryAfterMs : 60000
+          const limitMessage = waitMs > 60000
+            ? 'Please wait to send another message. You may only send 30 messages per hour.'
+            : 'Please wait to send another message. You may only send 5 messages per minute.'
+
           return makeJson({
             error: 'Message rate limit reached.',
             code: 'rate_limited',
-            message: `rate_limited:${retryAfterMs}`,
-            retry_after_ms: retryAfterMs,
+            message: limitMessage,
+            retry_after_ms: waitMs,
           }, 429)
         }
 

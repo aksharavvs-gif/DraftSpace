@@ -540,7 +540,9 @@ function App() {
   const [authContext, setAuthContext] = useState('student')
   const [submissionClock, setSubmissionClock] = useState(Date.now())
   const [chatRateLimitUntil, setChatRateLimitUntil] = useState(null)
+  const [chatToast, setChatToast] = useState('')
   const submissionButtonShakeTimeoutRef = useRef(null)
+  const chatToastTimeoutRef = useRef(null)
 
   const selectedSubmission = useMemo(
     () => submissions.find((item) => item.id === selectedSubmissionId) ?? null,
@@ -641,6 +643,18 @@ function App() {
     }, 420)
   }
 
+  const showChatRateLimitToast = (message) => {
+    setChatToast(message)
+
+    if (chatToastTimeoutRef.current) {
+      clearTimeout(chatToastTimeoutRef.current)
+    }
+
+    chatToastTimeoutRef.current = setTimeout(() => {
+      setChatToast('')
+    }, 5000)
+  }
+
   const submissionLimitState = useMemo(
     () => getSubmissionLimitState(submissions, submissionClock),
     [submissions, submissionClock],
@@ -677,6 +691,34 @@ function App() {
 
     return () => clearInterval(tick)
   }, [chatRateLimitUntil])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    window.__draftspaceTestChatRateLimit = (mode = 'minute') => {
+      const isHourLimit = String(mode).toLowerCase() === 'hour'
+      const waitMs = isHourLimit ? 60 * 60 * 1000 : 60 * 1000
+      const message = isHourLimit
+        ? 'Please wait to send another message. You may only send 30 messages per hour.'
+        : 'Please wait to send another message. You may only send 5 messages per minute.'
+
+      setChatRateLimitUntil(Date.now() + waitMs)
+      setChatError(message)
+      showChatRateLimitToast(message)
+    }
+
+    return () => {
+      delete window.__draftspaceTestChatRateLimit
+    }
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (chatToastTimeoutRef.current) {
+        clearTimeout(chatToastTimeoutRef.current)
+      }
+    }
+  }, [])
 
   const loadNotifications = async () => {
     if (!authResolved || !auth?.currentUser?.uid) {
@@ -969,13 +1011,23 @@ function App() {
         const rawMessage = typeof payload?.message === 'string' ? payload.message : ''
         const parsedRetryFromMessage = rawMessage.startsWith('rate_limited:') ? Number(rawMessage.split(':')[1] || 0) : 0
         const resolvedRetryMs = retryAfterMs > 0 ? retryAfterMs : parsedRetryFromMessage
+        const isRateLimitPayload = isStudentMessage && (
+          rateLimitCode ||
+          rawMessage.startsWith('rate_limited:') ||
+          rawMessage.includes('messages per minute') ||
+          rawMessage.includes('messages per hour') ||
+          String(payload?.error || '').includes('rate_limited')
+        )
 
-        if (isStudentMessage && (rateLimitCode || rawMessage.startsWith('rate_limited:'))) {
-          const waitMs = resolvedRetryMs > 0 ? resolvedRetryMs : 60000
+        if (isRateLimitPayload) {
+          const waitMs = resolvedRetryMs > 0 ? resolvedRetryMs : (resolvedRetryMs > 60000 ? 60 * 60 * 1000 : 60 * 1000)
+          const limitMessage = waitMs > 60000
+            ? 'Please wait to send another message. You may only send 30 messages per hour.'
+            : 'Please wait to send another message. You may only send 5 messages per minute.'
           const expiration = Date.now() + waitMs
           setChatRateLimitUntil(expiration)
-          const waitText = formatDurationForMessage(Math.max(0, expiration - Date.now()))
-          setChatError(`You've reached the messaging limit. Please wait ${waitText} before sending another message.`)
+          setChatError(limitMessage)
+          showChatRateLimitToast(limitMessage)
           setChatLoading(false)
           return
         }
@@ -2031,6 +2083,11 @@ function App() {
 
   return (
     <div className="page-shell">
+      {chatToast && (
+        <div className="chat-toast" role="alert" aria-live="polite">
+          {chatToast}
+        </div>
+      )}
       <header className="topbar">
         <button type="button" className="brand" onClick={() => setScreen('landing')}>
           <span className="brand-mark">✦</span>
