@@ -129,6 +129,45 @@ async function verifyIdToken(idToken: string) {
   return payload
 }
 
+const MAX_SUBMISSION_WORD_COUNT = 3000
+
+function countWords(value: unknown) {
+  const text = typeof value === 'string' ? value.trim() : ''
+  if (!text) return 0
+  return text.split(/\s+/).filter(Boolean).length
+}
+
+function getRpcErrorCodeAndMessage(payload: any) {
+  const errorText = typeof payload?.message === 'string' ? payload.message : ''
+  const errorCode = typeof payload?.code === 'string' ? payload.code : ''
+
+  if (errorCode === 'word_limit_exceeded' || /3,000-word limit|3,000 word limit|word limit/i.test(errorText)) {
+    return {
+      code: 'word_limit_exceeded',
+      message: 'Submission exceeds the 3,000-word limit. Please reduce your draft to 3,000 words or fewer.',
+    }
+  }
+
+  if (errorCode === 'daily_limit_reached' || /daily submission limit/i.test(errorText) || /limit reached/i.test(errorText)) {
+    return {
+      code: 'daily_limit_reached',
+      message: 'You\'ve reached your daily submission limit. Please wait for the oldest submission in the last 24 hours to expire before submitting again.',
+    }
+  }
+
+  if (errorCode === 'cooldown_active' || /wait before submitting again|cooldown/i.test(errorText)) {
+    return {
+      code: 'cooldown_active',
+      message: 'Please wait before submitting again.',
+    }
+  }
+
+  return {
+    code: 'submission_rejected',
+    message: errorText || 'Submission rejected by the server.',
+  }
+}
+
 // Handler
 Deno.serve(async (req: Request) => {
   const makeJson = (obj: any, status = 200) => {
@@ -205,44 +244,56 @@ Deno.serve(async (req: Request) => {
     }
 
     // Build row server-side; ignore any client-supplied user_id
-    const row: any = {
-      title: submission.title || '',
-      review_status: submission.review_status || 'Awaiting review',
-      response_time: submission.response_time || 'Within 72 hours',
-      stage: submission.stage || null,
-      writing_type: submission.writing_type || [],
-      draft: submission.draft || '',
-      context: submission.context || '',
-      feedback: null,
-      comments: submission.comments || [],
-      question_replies: submission.question_replies || [],
-      user_id: uid,
-      user_email: submission.user_email || null,
+    const draftText = typeof submission.draft === 'string' ? submission.draft : String(submission.draft || '')
+    const wordCount = countWords(draftText)
+    if (wordCount > MAX_SUBMISSION_WORD_COUNT) {
+      return makeJson({
+        error: 'Submission exceeds the 3,000-word limit.',
+        code: 'word_limit_exceeded',
+        message: `Submission exceeds the 3,000-word limit. Please reduce your draft to 3,000 words or fewer.`,
+      }, 400)
     }
 
-    const url = `${SUPABASE_URL.replace(/\/$/, '')}/rest/v1/submissions`
-    const res = await fetch(url, {
+    const rpcBody = {
+      p_user_id: uid,
+      p_title: typeof submission.title === 'string' ? submission.title : '',
+      p_stage: submission.stage || 'Drafting',
+      p_writing_type: typeof submission.writing_type === 'string' ? submission.writing_type : Array.isArray(submission.writing_type) ? submission.writing_type.join(', ') : '',
+      p_draft: draftText,
+      p_context: typeof submission.context === 'string' ? submission.context : '',
+      p_comments: Array.isArray(submission.comments) ? submission.comments : [],
+      p_question_replies: Array.isArray(submission.question_replies) ? submission.question_replies : [],
+      p_user_email: typeof submission.user_email === 'string' ? submission.user_email : null,
+      p_review_status: submission.review_status || 'Awaiting review',
+      p_response_time: submission.response_time || 'Within 72 hours',
+    }
+
+    const rpcUrl = `${SUPABASE_URL.replace(/\/$/, '')}/rest/v1/rpc/submit_submission_with_limits`
+    const rpcRes = await fetch(rpcUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         apikey: SUPABASE_SERVICE_ROLE_KEY,
         Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-        Prefer: 'return=representation',
       },
-      body: JSON.stringify([row]),
+      body: JSON.stringify(rpcBody),
     })
 
-    const text = await res.text()
-    let data: any = null
-    try { data = JSON.parse(text) } catch (e) { data = text }
+    const rpcText = await rpcRes.text()
+    let rpcData: any = null
+    try { rpcData = JSON.parse(rpcText) } catch (e) { rpcData = rpcText }
 
-    if (!res.ok) {
-      console.error('Supabase insert failed', res.status, text)
-      return new Response(JSON.stringify({ error: 'Upstream insert failed', status: res.status, body: data }), { status: 502, headers: { 'Content-Type': 'application/json', ...getCorsHeaders(req) } })
+    if (!rpcRes.ok) {
+      const parsedError = getRpcErrorCodeAndMessage(rpcData)
+      console.error('Supabase RPC insert failed', rpcRes.status, rpcData)
+      return makeJson({
+        error: parsedError.message,
+        code: parsedError.code,
+        message: parsedError.message,
+      }, 400)
     }
 
-    // data should be an array with the inserted row
-    const inserted = Array.isArray(data) ? data[0] : data
+    const inserted = Array.isArray(rpcData) ? rpcData[0] : rpcData
 
     return new Response(JSON.stringify({ submission: inserted }), { status: 201, headers: { 'Content-Type': 'application/json', ...getCorsHeaders(req) } })
   } catch (err) {

@@ -176,6 +176,70 @@ const normalizeWritingType = (raw) => {
   return ''
 }
 
+const MAX_SUBMISSION_WORD_COUNT = 3000
+const DAILY_SUBMISSION_LIMIT = 10
+const SUBMISSION_COOLDOWN_MS = 30 * 60 * 1000
+const DAILY_SUBMISSION_WINDOW_MS = 24 * 60 * 60 * 1000
+
+const countWords = (value = '') => {
+  const normalized = String(value || '').trim()
+  if (!normalized) return 0
+  return normalized.split(/\s+/).filter(Boolean).length
+}
+
+const formatDurationForMessage = (ms) => {
+  const totalMilliseconds = Math.max(0, Number(ms) || 0)
+  const totalSeconds = Math.max(1, Math.ceil(totalMilliseconds / 1000))
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+
+  if (hours > 0) {
+    return `${hours} hour${hours === 1 ? '' : 's'} and ${minutes} minute${minutes === 1 ? '' : 's'}`
+  }
+
+  if (minutes > 0) {
+    if (seconds > 0 && minutes < 10) {
+      return `${minutes} minute${minutes === 1 ? '' : 's'} and ${seconds} second${seconds === 1 ? '' : 's'}`
+    }
+    return `${minutes} minute${minutes === 1 ? '' : 's'}`
+  }
+
+  return `${seconds} second${seconds === 1 ? '' : 's'}`
+}
+
+const getSubmissionLimitState = (userSubmissions = [], nowMs = Date.now()) => {
+  const validItems = (userSubmissions || [])
+    .filter((item) => item && item.submitted_at)
+    .map((item) => ({
+      submittedAt: new Date(item.submitted_at).getTime(),
+    }))
+    .filter((item) => Number.isFinite(item.submittedAt))
+    .sort((a, b) => a.submittedAt - b.submittedAt)
+
+  const recentWindowStart = nowMs - DAILY_SUBMISSION_WINDOW_MS
+  const recentWithinWindow = validItems.filter((item) => item.submittedAt >= recentWindowStart)
+  const latestSubmission = validItems.length > 0 ? validItems[validItems.length - 1] : null
+  const oldestRecentSubmission = recentWithinWindow.length > 0 ? recentWithinWindow[0] : null
+
+  const cooldownRemainingMs = latestSubmission
+    ? Math.max(0, latestSubmission.submittedAt + SUBMISSION_COOLDOWN_MS - nowMs)
+    : 0
+
+  const dailyResetRemainingMs = oldestRecentSubmission
+    ? Math.max(0, oldestRecentSubmission.submittedAt + DAILY_SUBMISSION_WINDOW_MS - nowMs)
+    : 0
+
+  return {
+    recentCount: recentWithinWindow.length,
+    dailyLimitReached: recentWithinWindow.length >= DAILY_SUBMISSION_LIMIT,
+    cooldownRemainingMs,
+    dailyResetRemainingMs,
+    latestSubmissionAt: latestSubmission ? latestSubmission.submittedAt : null,
+    oldestRecentSubmissionAt: oldestRecentSubmission ? oldestRecentSubmission.submittedAt : null,
+  }
+}
+
 const readCompletedOnboardingEmails = () => {
   if (typeof window === 'undefined') return []
 
@@ -474,6 +538,8 @@ function App() {
   const [authMessage, setAuthMessage] = useState('')
   const [feedbackSubmittedMessage, setFeedbackSubmittedMessage] = useState('')
   const [authContext, setAuthContext] = useState('student')
+  const [submissionClock, setSubmissionClock] = useState(Date.now())
+  const submissionButtonShakeTimeoutRef = useRef(null)
 
   const selectedSubmission = useMemo(
     () => submissions.find((item) => item.id === selectedSubmissionId) ?? null,
@@ -560,6 +626,32 @@ function App() {
       return right - left
     })
   }
+
+  const triggerSubmissionConstraintNotice = (message) => {
+    setReviewNotice(message)
+
+    if (submissionButtonShakeTimeoutRef.current) {
+      clearTimeout(submissionButtonShakeTimeoutRef.current)
+    }
+
+    setSubmissionButtonShake(true)
+    submissionButtonShakeTimeoutRef.current = setTimeout(() => {
+      setSubmissionButtonShake(false)
+    }, 420)
+  }
+
+  const submissionLimitState = useMemo(
+    () => getSubmissionLimitState(submissions, submissionClock),
+    [submissions, submissionClock],
+  )
+
+  const submissionWordCount = useMemo(() => countWords(draftForm.draft), [draftForm.draft])
+  const [submissionButtonShake, setSubmissionButtonShake] = useState(false)
+
+  useEffect(() => {
+    const tick = setInterval(() => setSubmissionClock(Date.now()), 1000)
+    return () => clearInterval(tick)
+  }, [])
 
   const loadNotifications = async () => {
     if (!authResolved || !auth?.currentUser?.uid) {
@@ -1305,6 +1397,29 @@ function App() {
     setScreen('submission-step-1')
   }
 
+  const attemptStartNewSubmission = () => {
+    if (!authResolved || !authUid) {
+      setReviewNotice('Please sign in before submitting your draft.')
+      return
+    }
+
+    if (submissionLimitState.dailyLimitReached) {
+      triggerSubmissionConstraintNotice(
+        `You've reached your daily submission limit. You can submit again in ${formatDurationForMessage(submissionLimitState.dailyResetRemainingMs)}.`,
+      )
+      return
+    }
+
+    if (submissionLimitState.cooldownRemainingMs > 0) {
+      triggerSubmissionConstraintNotice(
+        `Please wait ${formatDurationForMessage(submissionLimitState.cooldownRemainingMs)} before submitting again.`,
+      )
+      return
+    }
+
+    startNewSubmission()
+  }
+
   const goToSubmissionStep = (step) => {
     setWizardStep(step)
     setScreen(`submission-step-${step}`)
@@ -1320,6 +1435,14 @@ function App() {
         setReviewNotice('Please add a title and paste your draft before continuing.')
         return
       }
+
+      if (submissionWordCount > MAX_SUBMISSION_WORD_COUNT) {
+        setReviewNotice(
+          `Your draft is ${submissionWordCount.toLocaleString()} words. Please reduce it to ${MAX_SUBMISSION_WORD_COUNT.toLocaleString()} words or fewer before submitting.`,
+        )
+        return
+      }
+
       setReviewNotice('')
       goToSubmissionStep(2)
       return
@@ -1338,8 +1461,8 @@ function App() {
     if (wizardStep === 3) {
       setReviewNotice('')
       const submit = async () => {
-      console.log('submit() invoked: wizardStep=3, authResolved=', authResolved, 'authUid=', authUid, 'hasFirebaseConfig=', hasFirebaseConfig)
-        // require Firebase config and authenticated user
+        console.log('submit() invoked: wizardStep=3, authResolved=', authResolved, 'authUid=', authUid, 'hasFirebaseConfig=', hasFirebaseConfig)
+
         if (!hasFirebaseConfig) {
           setReviewNotice('Submission failed: server not configured. Please try again later.')
           return
@@ -1355,16 +1478,34 @@ function App() {
           return
         }
 
+        const nextWordCount = countWords(draftForm.draft)
+        if (nextWordCount > MAX_SUBMISSION_WORD_COUNT) {
+          setReviewNotice(
+            `Your draft is ${nextWordCount.toLocaleString()} words. Please reduce it to ${MAX_SUBMISSION_WORD_COUNT.toLocaleString()} words or fewer before submitting.`,
+          )
+          return
+        }
+
+        if (submissionLimitState.dailyLimitReached) {
+          triggerSubmissionConstraintNotice(
+            `You've reached your daily submission limit. You can submit again in ${formatDurationForMessage(submissionLimitState.dailyResetRemainingMs)}.`,
+          )
+          return
+        }
+
+        if (submissionLimitState.cooldownRemainingMs > 0) {
+          triggerSubmissionConstraintNotice(
+            `Please wait ${formatDurationForMessage(submissionLimitState.cooldownRemainingMs)} before submitting again.`,
+          )
+          return
+        }
+
         try {
-          // Build submission payload to send to server-side Edge Function.
-          // Do NOT include user_id — the Edge Function will derive it from the
-          // verified Firebase ID token.
           const submissionPayload = {
             title: draftForm.title,
             review_status: 'Awaiting review',
             response_time: 'Within 72 hours',
             stage: draftForm.stage,
-            // writing_type stored as text in DB; send single string
             writing_type: Array.isArray(draftForm.writingType) ? draftForm.writingType[0] || '' : draftForm.writingType || '',
             draft: draftForm.draft,
             context: draftForm.context,
@@ -1382,11 +1523,9 @@ function App() {
             return
           }
 
-          // get a fresh Firebase ID token and POST to the Edge Function
           console.log('About to call auth.currentUser.getIdToken(); hasCurrentUser=', !!auth?.currentUser, 'uid=', auth?.currentUser?.uid || null)
           const idToken = await auth.currentUser.getIdToken()
 
-          // Safe diagnostic: do not print the token itself
           console.log('Submission diagnostics:', { hasCurrentUser: !!auth?.currentUser, uid: auth?.currentUser?.uid || null, hasIdToken: Boolean(idToken), idTokenLength: idToken?.length || 0 })
           console.log('About to fetch submitUrl; idToken present=', Boolean(idToken))
           const resp = await fetch(submitUrl, {
@@ -1403,9 +1542,36 @@ function App() {
           try { data = JSON.parse(text) } catch (e) { data = text }
 
           if (!resp.ok) {
+            const serverMessage = typeof data === 'object' && data && typeof data.message === 'string'
+              ? data.message
+              : 'Unable to save your submission. Please try again.'
+
+            const serverCode = typeof data === 'object' && data && typeof data.code === 'string'
+              ? data.code
+              : ''
+
             console.error('Submission Edge Function error', resp.status, data)
-            // show a more specific message in dev; keep generic for users
-            setReviewNotice('Unable to save your submission. Please try again.')
+
+            if (serverCode === 'daily_limit_reached') {
+              triggerSubmissionConstraintNotice(
+                `You've reached your daily submission limit. You can submit again in ${formatDurationForMessage(submissionLimitState.dailyResetRemainingMs || 0)}.`,
+              )
+              return
+            }
+
+            if (serverCode === 'cooldown_active') {
+              triggerSubmissionConstraintNotice(
+                `Please wait ${formatDurationForMessage(submissionLimitState.cooldownRemainingMs || 0)} before submitting again.`,
+              )
+              return
+            }
+
+            if (serverCode === 'word_limit_exceeded') {
+              setReviewNotice(serverMessage)
+              return
+            }
+
+            setReviewNotice(serverMessage)
             return
           }
 
@@ -1416,7 +1582,6 @@ function App() {
             return
           }
 
-          // Map backend row to UI shape (same mapping as realtime subscriber)
           const mapped = {
             id: inserted.id,
             title: inserted.title,
@@ -1438,7 +1603,6 @@ function App() {
             respondedAt: formatTimestamp(inserted.responded_at) || null,
           }
 
-          // after success, add the new submission to local state so student sees it immediately
           setSubmissions((current) => [mapped, ...current])
           setSelectedSubmissionId(inserted.id)
           setScreen('submission-success')
@@ -2118,7 +2282,11 @@ function App() {
                 </p>
               </div>
               <div className="dashboard-actions">
-                <button type="button" className="button primary" onClick={startNewSubmission}>
+                <button
+                  type="button"
+                  className={`button primary ${submissionButtonShake ? 'shake' : ''}`}
+                  onClick={attemptStartNewSubmission}
+                >
                   Start a new submission
                 </button>
                 <button type="button" className="button secondary" onClick={handleSignOut}>
@@ -2131,7 +2299,11 @@ function App() {
               <div className="empty-state">
                 <h3>Your writing home is ready.</h3>
                 <p>Share a draft whenever you are ready and we will connect you with a thoughtful reader.</p>
-                <button type="button" className="button primary" onClick={startNewSubmission}>
+                <button
+                  type="button"
+                  className={`button primary ${submissionButtonShake ? 'shake' : ''}`}
+                  onClick={attemptStartNewSubmission}
+                >
                   Submit your first draft
                 </button>
               </div>
@@ -2195,6 +2367,11 @@ function App() {
                   placeholder="Start pasting your draft..."
                 />
               </label>
+              <div className="word-counter-row">
+                <span className={submissionWordCount > MAX_SUBMISSION_WORD_COUNT ? 'word-counter word-counter-error' : 'word-counter'}>
+                  {submissionWordCount.toLocaleString()} / {MAX_SUBMISSION_WORD_COUNT.toLocaleString()} words
+                </span>
+              </div>
               <div className="form-actions">
                 <button type="button" className="button secondary" onClick={goToDashboard}>
                   Cancel
