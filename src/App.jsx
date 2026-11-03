@@ -648,7 +648,7 @@ function App() {
 
   const submissionLimitNotice = useMemo(() => {
     if (submissionLimitState.dailyLimitReached) {
-      return `You've reached your daily submission limit. You can submit again in ${formatDurationForMessage(submissionLimitState.dailyResetRemainingMs)}.`
+      return `You have reached your 5 submission daily limit. Please wait ${formatDurationForMessage(submissionLimitState.dailyResetRemainingMs)}. If you need help urgently, please reach out to draftspacesupport@gmail.com and we will try to get back to you.`
     }
 
     if (submissionLimitState.cooldownRemainingMs > 0) {
@@ -936,6 +936,8 @@ function App() {
     setChatLoading(true)
     setChatError('')
 
+    const isStudentMessage = authContext === 'student'
+
     try {
       const idToken = await auth.currentUser.getIdToken()
       const response = await fetch(sendUrl, {
@@ -968,7 +970,7 @@ function App() {
         const parsedRetryFromMessage = rawMessage.startsWith('rate_limited:') ? Number(rawMessage.split(':')[1] || 0) : 0
         const resolvedRetryMs = retryAfterMs > 0 ? retryAfterMs : parsedRetryFromMessage
 
-        if (rateLimitCode || rawMessage.startsWith('rate_limited:')) {
+        if (isStudentMessage && (rateLimitCode || rawMessage.startsWith('rate_limited:'))) {
           const waitMs = resolvedRetryMs > 0 ? resolvedRetryMs : 60000
           const expiration = Date.now() + waitMs
           setChatRateLimitUntil(expiration)

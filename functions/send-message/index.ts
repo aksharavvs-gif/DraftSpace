@@ -371,55 +371,94 @@ Deno.serve(async (req: Request) => {
       ...(senderName ? { sender_name: senderName } : {}),
     }
 
-    const rpcUrl = `${SUPABASE_URL.replace(/\/$/, '')}/rest/v1/rpc/insert_message_with_limits`
-    const rpcRes = await fetch(rpcUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        apikey: SUPABASE_SERVICE_ROLE_KEY,
-        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      },
-      body: JSON.stringify({
-        p_submission_id: submissionId,
-        p_sender_uid: uid,
-        p_sender_role: senderRole,
-        p_message: messageText,
-        p_sender_name: senderName || null,
-      }),
-    })
+    const isStudentMessage = senderRole === 'student'
+    let saved: any = null
 
-    const rpcText = await rpcRes.text()
-    let insertData: any = null
-    try { insertData = JSON.parse(rpcText) } catch (e) { insertData = rpcText }
+    if (isStudentMessage) {
+      const rpcUrl = `${SUPABASE_URL.replace(/\/$/, '')}/rest/v1/rpc/insert_message_with_limits`
+      const rpcRes = await fetch(rpcUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: SUPABASE_SERVICE_ROLE_KEY,
+          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        },
+        body: JSON.stringify({
+          p_submission_id: submissionId,
+          p_sender_uid: uid,
+          p_sender_role: senderRole,
+          p_message: messageText,
+          p_sender_name: senderName || null,
+        }),
+      })
 
-    if (!rpcRes.ok) {
-      const messageTextFromServer = typeof insertData === 'object' && insertData && typeof insertData.message === 'string'
-        ? insertData.message
-        : typeof insertData === 'string'
-        ? insertData
-        : ''
+      const rpcText = await rpcRes.text()
+      let insertData: any = null
+      try { insertData = JSON.parse(rpcText) } catch (e) { insertData = rpcText }
 
-      const retryMatch = messageTextFromServer.match(/^rate_limited:(\d+)$/)
-      const retryAfterMs = retryMatch ? Number(retryMatch[1] || 0) : 0
+      if (!rpcRes.ok) {
+        const messageTextFromServer = typeof insertData === 'object' && insertData && typeof insertData.message === 'string'
+          ? insertData.message
+          : typeof insertData === 'string'
+          ? insertData
+          : ''
 
-      if (retryMatch) {
+        const retryMatch = messageTextFromServer.match(/^rate_limited:(\d+)$/)
+        const retryAfterMs = retryMatch ? Number(retryMatch[1] || 0) : 0
+
+        if (retryMatch) {
+          return makeJson({
+            error: 'Message rate limit reached.',
+            code: 'rate_limited',
+            message: `rate_limited:${retryAfterMs}`,
+            retry_after_ms: retryAfterMs,
+          }, 429)
+        }
+
+        console.error('send-message: insert failed', rpcRes.status, rpcText)
         return makeJson({
-          error: 'Message rate limit reached.',
-          code: 'rate_limited',
-          message: `rate_limited:${retryAfterMs}`,
-          retry_after_ms: retryAfterMs,
-        }, 429)
+          error: 'Upstream insert failed',
+          details: insertData,
+          code: 'message_insert_failed',
+        }, 502)
       }
 
-      console.error('send-message: insert failed', rpcRes.status, rpcText)
-      return makeJson({
-        error: 'Upstream insert failed',
-        details: insertData,
-        code: 'message_insert_failed',
-      }, 502)
-    }
+      saved = Array.isArray(insertData) ? insertData[0] : insertData
+    } else {
+      const insertUrl = `${SUPABASE_URL.replace(/\/$/, '')}/rest/v1/messages?select=*`
+      const insertRes = await fetch(insertUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: SUPABASE_SERVICE_ROLE_KEY,
+          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          Prefer: 'return=representation',
+        },
+        body: JSON.stringify({
+          submission_id: submissionId,
+          sender_uid: uid,
+          sender_role: senderRole,
+          sender_name: senderName || null,
+          message: messageText,
+          created_at: new Date().toISOString(),
+        }),
+      })
 
-    const saved = Array.isArray(insertData) ? insertData[0] : insertData
+      const insertText = await insertRes.text()
+      let insertData: any = null
+      try { insertData = JSON.parse(insertText) } catch (e) { insertData = insertText }
+
+      if (!insertRes.ok) {
+        console.error('send-message: reviewer insert failed', insertRes.status, insertText)
+        return makeJson({
+          error: 'Upstream insert failed',
+          details: insertData,
+          code: 'message_insert_failed',
+        }, 502)
+      }
+
+      saved = Array.isArray(insertData) ? insertData[0] : insertData
+    }
     const messageId = saved?.id || row?.id || null
 
     try {

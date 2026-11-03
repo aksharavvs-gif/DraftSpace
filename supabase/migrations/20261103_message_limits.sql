@@ -32,6 +32,28 @@ begin
     raise exception 'Sender role is required.' using errcode = '23514';
   end if;
 
+  if lower(trim(p_sender_role)) <> 'student' then
+    insert into public.messages (
+      submission_id,
+      sender_uid,
+      sender_role,
+      sender_name,
+      message,
+      created_at
+    )
+    values (
+      p_submission_id,
+      p_sender_uid,
+      p_sender_role,
+      p_sender_name,
+      trim(p_message),
+      v_now
+    )
+    returning * into v_inserted;
+
+    return v_inserted;
+  end if;
+
   v_message := trim(p_message);
   if v_message = '' then
     raise exception 'Message is required.' using errcode = '23514';
@@ -45,6 +67,7 @@ begin
     into v_short_count
   from public.messages
   where sender_uid = p_sender_uid
+    and sender_role = 'student'
     and created_at >= v_now - interval '60 seconds';
 
   if v_short_count >= 5 then
@@ -52,6 +75,7 @@ begin
       into v_oldest_short
     from public.messages
     where sender_uid = p_sender_uid
+      and sender_role = 'student'
       and created_at >= v_now - interval '60 seconds';
 
     if v_oldest_short is null then
@@ -66,6 +90,7 @@ begin
     into v_hour_count
   from public.messages
   where sender_uid = p_sender_uid
+    and sender_role = 'student'
     and created_at >= v_now - interval '60 minutes';
 
   if v_hour_count >= 30 then
@@ -73,6 +98,7 @@ begin
       into v_oldest_hour
     from public.messages
     where sender_uid = p_sender_uid
+      and sender_role = 'student'
       and created_at >= v_now - interval '60 minutes';
 
     if v_oldest_hour is null then
