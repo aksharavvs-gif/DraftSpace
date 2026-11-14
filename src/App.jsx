@@ -573,6 +573,8 @@ function App() {
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const reviewerUnauthorizedRef = useRef(false)
   const reviewerAuthInFlightRef = useRef(false)
+  const ageConfirmationInFlightRef = useRef(null)
+  const ageConfirmationConfirmedRef = useRef(null)
   const lastConfirmedHighlightsRef = useRef({})
   const highlightSaveRequestRef = useRef({})
   const [notificationsLoading, setNotificationsLoading] = useState(false)
@@ -1303,6 +1305,9 @@ function App() {
       setAuthResolved(true)
 
       if (!nextUser) {
+        ageConfirmationInFlightRef.current = null
+        ageConfirmationConfirmedRef.current = null
+
         if (reviewerUnauthorizedRef.current) {
           setAuthContext('student')
           setReviewerLoggedIn(false)
@@ -1329,25 +1334,35 @@ function App() {
         return
       }
 
-      const normalizedEmail = nextUser.email?.toLowerCase() || ''
-
-      const storedAgeConfirmed = await checkStoredAgeConfirmation(nextUser.uid)
-      if (storedAgeConfirmed === null) {
-        setAuthContext('student')
-        setAuthMessage('We could not verify your age confirmation. Please try again.')
-        setAgeGateOpen(true)
-        setAgeGateError('We could not verify your age confirmation right now. Please try again.')
-        setScreen('auth')
+      if (ageConfirmationInFlightRef.current === nextUser.uid) {
         return
       }
 
-      if (!storedAgeConfirmed) {
-        setAuthContext('student')
-        setAuthMessage('We need to confirm that you are 13 or older before continuing.')
-        setAgeGateOpen(true)
-        setAgeGateError('DraftSpace accounts are for users who are 13 or older.')
-        setScreen('auth')
-        return
+      const normalizedEmail = nextUser.email?.toLowerCase() || ''
+
+      if (ageConfirmationConfirmedRef.current === nextUser.uid) {
+        setAuthMessage('')
+      } else {
+        const storedAgeConfirmed = await checkStoredAgeConfirmation(nextUser.uid)
+        if (storedAgeConfirmed === null) {
+          setAuthContext('student')
+          setAuthMessage('We could not verify your age confirmation. Please try again.')
+          setAgeGateOpen(true)
+          setAgeGateError('We could not verify your age confirmation right now. Please try again.')
+          setScreen('auth')
+          return
+        }
+
+        if (!storedAgeConfirmed) {
+          setAuthContext('student')
+          setAuthMessage('We need to confirm that you are 13 or older before continuing.')
+          setAgeGateOpen(true)
+          setAgeGateError('DraftSpace accounts are for users who are 13 or older.')
+          setScreen('auth')
+          return
+        }
+
+        ageConfirmationConfirmedRef.current = nextUser.uid
       }
 
       setProfile((current) => ({
@@ -1506,25 +1521,41 @@ function App() {
       const result = await signInWithPopup(auth, googleProvider)
       const user = result.user
       const normalizedEmail = user.email?.toLowerCase() || ''
+      ageConfirmationInFlightRef.current = user.uid
 
-      const storedAgeConfirmed = await checkStoredAgeConfirmation(user.uid)
-      if (storedAgeConfirmed === null) {
-        setAuthMessage('We could not verify your age confirmation. Please try again.')
-        setAgeGateError('We could not verify your age confirmation right now. Please try again.')
-        setAgeGateOpen(true)
-        await signOut(auth)
-        return
-      }
-
-      if (!storedAgeConfirmed) {
-        const persisted = await persistAgeConfirmation(user)
-        if (!persisted) {
-          setAgeGateError('We could not save your age confirmation. Please try again.')
+      try {
+        const storedAgeConfirmed = await checkStoredAgeConfirmation(user.uid)
+        if (storedAgeConfirmed === null) {
+          setAuthMessage('We could not verify your age confirmation. Please try again.')
+          setAgeGateError('We could not verify your age confirmation right now. Please try again.')
           setAgeGateOpen(true)
-          setAuthMessage('We could not complete your account setup. Please try again.')
           await signOut(auth)
           return
         }
+
+        if (!storedAgeConfirmed) {
+          const persisted = await persistAgeConfirmation(user)
+          if (!persisted) {
+            setAgeGateError('We could not save your age confirmation. Please try again.')
+            setAgeGateOpen(true)
+            setAuthMessage('We could not complete your account setup. Please try again.')
+            await signOut(auth)
+            return
+          }
+
+          const verifiedAfterSave = await checkStoredAgeConfirmation(user.uid)
+          if (verifiedAfterSave !== true) {
+            setAgeGateError('We could not confirm that your age information was saved. Please try again.')
+            setAgeGateOpen(true)
+            setAuthMessage('We could not complete your account setup. Please try again.')
+            await signOut(auth)
+            return
+          }
+        }
+
+        ageConfirmationConfirmedRef.current = user.uid
+      } finally {
+        ageConfirmationInFlightRef.current = null
       }
 
       setProfile((current) => ({

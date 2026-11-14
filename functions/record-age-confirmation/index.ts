@@ -253,12 +253,10 @@ Deno.serve(async (req: Request) => {
     const authHeader = req.headers.get('authorization') || ''
     let idToken = ''
 
-    if (authHeader && authHeader.toLowerCase().startsWith('bearer ')) {
-      idToken = authHeader.slice(7).trim()
-    }
-
-    if (!idToken && typeof body.idToken === 'string') {
+    if (typeof body.idToken === 'string' && body.idToken.trim()) {
       idToken = body.idToken.trim()
+    } else if (authHeader && authHeader.toLowerCase().startsWith('bearer ')) {
+      idToken = authHeader.slice(7).trim()
     }
 
     if (!idToken) {
