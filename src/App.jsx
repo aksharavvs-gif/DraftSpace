@@ -270,6 +270,65 @@ const markOnboardingComplete = (email) => {
   window.localStorage.setItem(ONBOARDING_STORAGE_KEY, JSON.stringify([...current, normalizedEmail]))
 }
 
+const checkStoredAgeConfirmation = async (uid) => {
+  if (!uid || !supabase) return false
+
+  try {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('age_13_or_older, age_attested_at')
+      .eq('firebase_uid', String(uid))
+      .maybeSingle()
+
+    if (error) {
+      console.error('Unable to read age confirmation from Supabase', error)
+      return false
+    }
+
+    return Boolean(data?.age_13_or_older === true && data?.age_attested_at)
+  } catch (err) {
+    console.error('Age confirmation lookup failed', err)
+    return false
+  }
+}
+
+const persistAgeConfirmation = async (user) => {
+  if (!user) return false
+
+  const ageEndpoint = import.meta.env.VITE_RECORD_AGE_CONFIRMATION_URL
+  if (!ageEndpoint) {
+    console.warn('Age confirmation endpoint is not configured.')
+    return false
+  }
+
+  try {
+    const idToken = await user.getIdToken()
+    const response = await fetch(ageEndpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ idToken, age_13_or_older: true }),
+    })
+
+    const responseText = await response.text()
+    let data = null
+    try {
+      data = JSON.parse(responseText)
+    } catch (error) {
+      data = responseText
+    }
+
+    if (!response.ok) {
+      console.error('Age confirmation save failed', response.status, data)
+      return false
+    }
+
+    return Boolean(data?.success || data?.age_13_or_older === true)
+  } catch (err) {
+    console.error('Age confirmation save request failed', err)
+    return false
+  }
+}
+
 const renderDraftSegments = (draft, highlights) => {
   if (!draft) return []
 
@@ -536,6 +595,8 @@ function App() {
   const [notificationsError, setNotificationsError] = useState('')
   const [reviewNotice, setReviewNotice] = useState('')
   const [authMessage, setAuthMessage] = useState('')
+  const [ageGateOpen, setAgeGateOpen] = useState(false)
+  const [ageGateError, setAgeGateError] = useState('')
   const [feedbackSubmittedMessage, setFeedbackSubmittedMessage] = useState('')
   const [authContext, setAuthContext] = useState('student')
   const [submissionClock, setSubmissionClock] = useState(Date.now())
@@ -1286,6 +1347,17 @@ function App() {
 
       const normalizedEmail = nextUser.email?.toLowerCase() || ''
 
+      const storedAgeConfirmed = await checkStoredAgeConfirmation(nextUser.uid)
+      if (!storedAgeConfirmed) {
+        setAuthContext('student')
+        setAuthMessage('We need to confirm that you are 13 or older before continuing.')
+        setAgeGateOpen(true)
+        setAgeGateError('DraftSpace accounts are for users who are 13 or older.')
+        setScreen('auth')
+        await signOut(auth)
+        return
+      }
+
       setProfile((current) => ({
         ...current,
         name: nextUser.displayName?.split(' ')[0] || current.name,
@@ -1419,10 +1491,12 @@ function App() {
   const openAuth = () => {
     setAuthContext('student')
     setAccountStage('auth')
+    setAgeGateError('')
+    setAgeGateOpen(true)
     setScreen('auth')
   }
 
-  const handleGoogleSignIn = async () => {
+  const handleGoogleSignIn = async (confirmedAge = false) => {
     if (!auth || !googleProvider) {
       setAuthMessage('Google sign-in is not configured yet. Add your Firebase credentials to enable it.')
       return
@@ -1434,6 +1508,26 @@ function App() {
       const result = await signInWithPopup(auth, googleProvider)
       const user = result.user
       const normalizedEmail = user.email?.toLowerCase() || ''
+
+      if (confirmedAge) {
+        const persisted = await persistAgeConfirmation(user)
+        if (!persisted) {
+          setAgeGateError('We could not save your age confirmation. Please try again.')
+          setAgeGateOpen(true)
+          setAuthMessage('We could not complete your account setup. Please try again.')
+          await signOut(auth)
+          return
+        }
+      } else {
+        const hasStoredConfirmation = await checkStoredAgeConfirmation(user.uid)
+        if (!hasStoredConfirmation) {
+          setAgeGateError('DraftSpace accounts are for users who are 13 or older.')
+          setAgeGateOpen(true)
+          setAuthMessage('You must be 13 or older to create a DraftSpace account.')
+          await signOut(auth)
+          return
+        }
+      }
 
       setProfile((current) => ({
         ...current,
@@ -2083,6 +2177,37 @@ function App() {
 
   return (
     <div className="page-shell">
+      {ageGateOpen && (
+        <div className="age-gate-backdrop" role="dialog" aria-modal="true" aria-labelledby="age-gate-title">
+          <div className="age-gate-card">
+            <p className="eyebrow">Age confirmation required</p>
+            <h2 id="age-gate-title">Are you 13 years of age or older?</h2>
+            <div className="age-gate-options">
+              <button
+                type="button"
+                className="button primary full"
+                onClick={() => {
+                  setAgeGateError('')
+                  setAgeGateOpen(false)
+                  handleGoogleSignIn(true)
+                }}
+              >
+                Yes, I&apos;m 13 or older
+              </button>
+              <button
+                type="button"
+                className="button secondary full age-gate-deny"
+                onClick={() => {
+                  setAgeGateError('DraftSpace accounts are for users who are 13 or older. Please ask a parent or guardian to help you if needed.')
+                }}
+              >
+                No, I&apos;m under 13
+              </button>
+            </div>
+            {ageGateError && <p className="tiny-note age-gate-message">{ageGateError}</p>}
+          </div>
+        </div>
+      )}
       {chatToast && (
         <div className="chat-toast" role="alert" aria-live="polite">
           {chatToast}

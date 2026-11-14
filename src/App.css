@@ -885,6 +885,48 @@
   margin-bottom: 10px;
 }
 
+.age-gate-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(26, 18, 45, 0.58);
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  z-index: 100;
+}
+
+.age-gate-card {
+  width: min(460px, 100%);
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(122, 92, 184, 0.18);
+  border-radius: 28px;
+  box-shadow: 0 28px 60px rgba(31, 20, 58, 0.18);
+  padding: 28px 24px;
+}
+
+.age-gate-card h2 {
+  margin: 0 0 18px;
+  color: var(--text-h);
+  font-size: clamp(1.8rem, 4vw, 2.4rem);
+  line-height: 1.1;
+}
+
+.age-gate-options {
+  display: grid;
+  gap: 12px;
+}
+
+.age-gate-message {
+  margin-top: 14px;
+  color: #8b1e3f;
+  font-weight: 600;
+}
+
+.age-gate-deny {
+  border-color: rgba(122, 92, 184, 0.2);
+  background: rgba(255, 255, 255, 0.8);
+}
+
 .chat-limit-banner {
   background: rgba(173, 36, 71, 0.08);
   border: 1px solid rgba(173, 36, 71, 0.18);
