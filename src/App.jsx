@@ -273,6 +273,9 @@ const markOnboardingComplete = (email) => {
 const checkStoredAgeConfirmation = async (uid) => {
   if (!uid || !supabase) return null
 
+  const traceId = `age-query:${Date.now()}:${Math.random().toString(16).slice(2, 8)}`
+  console.log('[age-trace]', traceId, 'query-start', { uid: String(uid) })
+
   try {
     const { data, error } = await supabase
       .from('profiles')
@@ -281,19 +284,30 @@ const checkStoredAgeConfirmation = async (uid) => {
       .maybeSingle()
 
     if (error) {
-      console.error('Unable to read age confirmation from Supabase', error)
+      console.error('[age-trace]', traceId, 'query-error', { uid: String(uid), error: error.message })
       return null
     }
 
-    return Boolean(data?.age_13_or_older === true && data?.age_attested_at)
+    const result = Boolean(data?.age_13_or_older === true && data?.age_attested_at)
+    console.log('[age-trace]', traceId, 'query-result', {
+      uid: String(uid),
+      found: Boolean(data),
+      age_13_or_older: Boolean(data?.age_13_or_older),
+      has_attested_at: Boolean(data?.age_attested_at),
+      result,
+    })
+    return result
   } catch (err) {
-    console.error('Age confirmation lookup failed', err)
+    console.error('[age-trace]', traceId, 'query-exception', { uid: String(uid), message: err?.message || 'unknown' })
     return null
   }
 }
 
 const persistAgeConfirmation = async (user) => {
   if (!user || !supabase) return false
+
+  const traceId = `age-save:${Date.now()}:${Math.random().toString(16).slice(2, 8)}`
+  console.log('[age-trace]', traceId, 'persist-start', { uid: user.uid })
 
   try {
     const idToken = await user.getIdToken()
@@ -302,13 +316,20 @@ const persistAgeConfirmation = async (user) => {
     })
 
     if (error) {
-      console.error('Age confirmation save failed', error)
+      console.error('[age-trace]', traceId, 'persist-error', { uid: user.uid, error: error.message || String(error) })
       return false
     }
 
-    return Boolean(data?.success || data?.age_13_or_older === true)
+    const result = Boolean(data?.success || data?.age_13_or_older === true)
+    console.log('[age-trace]', traceId, 'persist-response', {
+      uid: user.uid,
+      success: Boolean(data?.success),
+      age_13_or_older: Boolean(data?.age_13_or_older),
+      result,
+    })
+    return result
   } catch (err) {
-    console.error('Age confirmation save request failed', err)
+    console.error('[age-trace]', traceId, 'persist-exception', { uid: user.uid, message: err?.message || 'unknown' })
     return false
   }
 }
@@ -580,6 +601,7 @@ function App() {
   const [notificationsLoading, setNotificationsLoading] = useState(false)
   const [notificationsError, setNotificationsError] = useState('')
   const [reviewNotice, setReviewNotice] = useState('')
+  const traceIdRef = useRef(0)
   const [authMessage, setAuthMessage] = useState('')
   const [ageGateOpen, setAgeGateOpen] = useState(false)
   const [ageGateError, setAgeGateError] = useState('')
@@ -1510,9 +1532,12 @@ function App() {
     }
 
     setAuthContext('student')
+    const flowId = `google-flow:${Date.now()}:${Math.random().toString(16).slice(2, 8)}`
+    console.log('[age-trace]', flowId, 'handleGoogleSignIn-start', { confirmedAge })
 
     try {
       if (!confirmedAge) {
+        console.log('[age-trace]', flowId, 'open-age-gate', { trigger: 'handleGoogleSignIn', reason: 'user-clicked-google' })
         setAgeGateOpen(true)
         setAgeGateError('')
         return
@@ -1522,10 +1547,13 @@ function App() {
       const user = result.user
       const normalizedEmail = user.email?.toLowerCase() || ''
       ageConfirmationInFlightRef.current = user.uid
+      console.log('[age-trace]', flowId, 'google-auth-complete', { uid: user.uid })
 
       try {
         const storedAgeConfirmed = await checkStoredAgeConfirmation(user.uid)
+        console.log('[age-trace]', flowId, 'post-auth-age-check', { uid: user.uid, storedAgeConfirmed })
         if (storedAgeConfirmed === null) {
+          console.log('[age-trace]', flowId, 'open-age-gate', { trigger: 'post-auth-check-null', uid: user.uid })
           setAuthMessage('We could not verify your age confirmation. Please try again.')
           setAgeGateError('We could not verify your age confirmation right now. Please try again.')
           setAgeGateOpen(true)
@@ -1535,7 +1563,9 @@ function App() {
 
         if (!storedAgeConfirmed) {
           const persisted = await persistAgeConfirmation(user)
+          console.log('[age-trace]', flowId, 'persist-result', { uid: user.uid, persisted })
           if (!persisted) {
+            console.log('[age-trace]', flowId, 'open-age-gate', { trigger: 'persist-failed', uid: user.uid })
             setAgeGateError('We could not save your age confirmation. Please try again.')
             setAgeGateOpen(true)
             setAuthMessage('We could not complete your account setup. Please try again.')
@@ -1544,7 +1574,9 @@ function App() {
           }
 
           const verifiedAfterSave = await checkStoredAgeConfirmation(user.uid)
+          console.log('[age-trace]', flowId, 'verified-after-save', { uid: user.uid, verifiedAfterSave })
           if (verifiedAfterSave !== true) {
+            console.log('[age-trace]', flowId, 'open-age-gate', { trigger: 'verified-after-save-failed', uid: user.uid })
             setAgeGateError('We could not confirm that your age information was saved. Please try again.')
             setAgeGateOpen(true)
             setAuthMessage('We could not complete your account setup. Please try again.')
