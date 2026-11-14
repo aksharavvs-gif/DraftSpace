@@ -271,7 +271,7 @@ const markOnboardingComplete = (email) => {
 }
 
 const checkStoredAgeConfirmation = async (uid) => {
-  if (!uid || !supabase) return false
+  if (!uid || !supabase) return null
 
   try {
     const { data, error } = await supabase
@@ -282,43 +282,27 @@ const checkStoredAgeConfirmation = async (uid) => {
 
     if (error) {
       console.error('Unable to read age confirmation from Supabase', error)
-      return false
+      return null
     }
 
     return Boolean(data?.age_13_or_older === true && data?.age_attested_at)
   } catch (err) {
     console.error('Age confirmation lookup failed', err)
-    return false
+    return null
   }
 }
 
 const persistAgeConfirmation = async (user) => {
-  if (!user) return false
-
-  const ageEndpoint = import.meta.env.VITE_RECORD_AGE_CONFIRMATION_URL
-  if (!ageEndpoint) {
-    console.warn('Age confirmation endpoint is not configured.')
-    return false
-  }
+  if (!user || !supabase) return false
 
   try {
     const idToken = await user.getIdToken()
-    const response = await fetch(ageEndpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ idToken, age_13_or_older: true }),
+    const { data, error } = await supabase.functions.invoke('record-age-confirmation', {
+      body: { idToken, age_13_or_older: true },
     })
 
-    const responseText = await response.text()
-    let data = null
-    try {
-      data = JSON.parse(responseText)
-    } catch (error) {
-      data = responseText
-    }
-
-    if (!response.ok) {
-      console.error('Age confirmation save failed', response.status, data)
+    if (error) {
+      console.error('Age confirmation save failed', error)
       return false
     }
 
@@ -1348,13 +1332,21 @@ function App() {
       const normalizedEmail = nextUser.email?.toLowerCase() || ''
 
       const storedAgeConfirmed = await checkStoredAgeConfirmation(nextUser.uid)
+      if (storedAgeConfirmed === null) {
+        setAuthContext('student')
+        setAuthMessage('We could not verify your age confirmation. Please try again.')
+        setAgeGateOpen(true)
+        setAgeGateError('We could not verify your age confirmation right now. Please try again.')
+        setScreen('auth')
+        return
+      }
+
       if (!storedAgeConfirmed) {
         setAuthContext('student')
         setAuthMessage('We need to confirm that you are 13 or older before continuing.')
         setAgeGateOpen(true)
         setAgeGateError('DraftSpace accounts are for users who are 13 or older.')
         setScreen('auth')
-        await signOut(auth)
         return
       }
 
@@ -1492,7 +1484,7 @@ function App() {
     setAuthContext('student')
     setAccountStage('auth')
     setAgeGateError('')
-    setAgeGateOpen(true)
+    setAgeGateOpen(false)
     setScreen('auth')
   }
 
@@ -1505,25 +1497,31 @@ function App() {
     setAuthContext('student')
 
     try {
+      if (!confirmedAge) {
+        setAgeGateOpen(true)
+        setAgeGateError('')
+        return
+      }
+
       const result = await signInWithPopup(auth, googleProvider)
       const user = result.user
       const normalizedEmail = user.email?.toLowerCase() || ''
 
-      if (confirmedAge) {
+      const storedAgeConfirmed = await checkStoredAgeConfirmation(user.uid)
+      if (storedAgeConfirmed === null) {
+        setAuthMessage('We could not verify your age confirmation. Please try again.')
+        setAgeGateError('We could not verify your age confirmation right now. Please try again.')
+        setAgeGateOpen(true)
+        await signOut(auth)
+        return
+      }
+
+      if (!storedAgeConfirmed) {
         const persisted = await persistAgeConfirmation(user)
         if (!persisted) {
           setAgeGateError('We could not save your age confirmation. Please try again.')
           setAgeGateOpen(true)
           setAuthMessage('We could not complete your account setup. Please try again.')
-          await signOut(auth)
-          return
-        }
-      } else {
-        const hasStoredConfirmation = await checkStoredAgeConfirmation(user.uid)
-        if (!hasStoredConfirmation) {
-          setAgeGateError('DraftSpace accounts are for users who are 13 or older.')
-          setAgeGateOpen(true)
-          setAuthMessage('You must be 13 or older to create a DraftSpace account.')
           await signOut(auth)
           return
         }
@@ -2186,10 +2184,10 @@ function App() {
               <button
                 type="button"
                 className="button primary full"
-                onClick={() => {
+                onClick={async () => {
                   setAgeGateError('')
                   setAgeGateOpen(false)
-                  handleGoogleSignIn(true)
+                  await handleGoogleSignIn(true)
                 }}
               >
                 Yes, I&apos;m 13 or older
@@ -2197,8 +2195,14 @@ function App() {
               <button
                 type="button"
                 className="button secondary full age-gate-deny"
-                onClick={() => {
-                  setAgeGateError('DraftSpace accounts are for users who are 13 or older. Please ask a parent or guardian to help you if needed.')
+                onClick={async () => {
+                  const message = 'DraftSpace accounts are for users who are 13 or older. Please ask a parent or guardian to help you if needed.'
+                  setAgeGateError(message)
+                  setAuthMessage(message)
+                  setScreen('auth')
+                  if (auth?.currentUser) {
+                    await signOut(auth)
+                  }
                 }}
               >
                 No, I&apos;m under 13
@@ -2402,7 +2406,10 @@ function App() {
             <p className="flow-copy">
               A simple account creates a calm home for your drafts and the feedback that follows.
             </p>
-            <button type="button" className="button primary large" onClick={handleGoogleSignIn}>
+            <button type="button" className="button primary large" onClick={() => {
+              setAgeGateError('')
+              setAgeGateOpen(true)
+            }}>
               Continue with Google
             </button>
             {authMessage && <p className="tiny-note">{authMessage}</p>}
