@@ -273,9 +273,6 @@ const markOnboardingComplete = (email) => {
 const checkStoredAgeConfirmation = async (uid) => {
   if (!uid || !supabase) return null
 
-  const traceId = `age-query:${Date.now()}:${Math.random().toString(16).slice(2, 8)}`
-  console.log('[age-trace]', traceId, 'query-start', { uid: String(uid) })
-
   try {
     const { data, error } = await supabase
       .from('profiles')
@@ -284,30 +281,19 @@ const checkStoredAgeConfirmation = async (uid) => {
       .maybeSingle()
 
     if (error) {
-      console.error('[age-trace]', traceId, 'query-error', { uid: String(uid), error: error.message })
+      console.error('Unable to read age confirmation from Supabase', error)
       return null
     }
 
-    const result = Boolean(data?.age_13_or_older === true && data?.age_attested_at)
-    console.log('[age-trace]', traceId, 'query-result', {
-      uid: String(uid),
-      found: Boolean(data),
-      age_13_or_older: Boolean(data?.age_13_or_older),
-      has_attested_at: Boolean(data?.age_attested_at),
-      result,
-    })
-    return result
+    return Boolean(data?.age_13_or_older === true && data?.age_attested_at)
   } catch (err) {
-    console.error('[age-trace]', traceId, 'query-exception', { uid: String(uid), message: err?.message || 'unknown' })
+    console.error('Age confirmation lookup failed', err)
     return null
   }
 }
 
 const persistAgeConfirmation = async (user) => {
   if (!user || !supabase) return false
-
-  const traceId = `age-save:${Date.now()}:${Math.random().toString(16).slice(2, 8)}`
-  console.log('[age-trace]', traceId, 'persist-start', { uid: user.uid })
 
   try {
     const idToken = await user.getIdToken()
@@ -316,20 +302,13 @@ const persistAgeConfirmation = async (user) => {
     })
 
     if (error) {
-      console.error('[age-trace]', traceId, 'persist-error', { uid: user.uid, error: error.message || String(error) })
+      console.error('Age confirmation save failed', error)
       return false
     }
 
-    const result = Boolean(data?.success || data?.age_13_or_older === true)
-    console.log('[age-trace]', traceId, 'persist-response', {
-      uid: user.uid,
-      success: Boolean(data?.success),
-      age_13_or_older: Boolean(data?.age_13_or_older),
-      result,
-    })
-    return result
+    return Boolean(data?.success || data?.age_13_or_older === true)
   } catch (err) {
-    console.error('[age-trace]', traceId, 'persist-exception', { uid: user.uid, message: err?.message || 'unknown' })
+    console.error('Age confirmation save request failed', err)
     return false
   }
 }
@@ -560,7 +539,6 @@ function App() {
   const [submissions, setSubmissions] = useState([])
   const [authResolved, setAuthResolved] = useState(false)
   const [authUid, setAuthUid] = useState(null)
-  const [authAgeStatus, setAuthAgeStatus] = useState('checking')
   const [selectedSubmissionId, setSelectedSubmissionId] = useState(null)
   const [wizardStep, setWizardStep] = useState(1)
   const [draftForm, setDraftForm] = useState({
@@ -605,10 +583,10 @@ function App() {
   const [notificationsLoading, setNotificationsLoading] = useState(false)
   const [notificationsError, setNotificationsError] = useState('')
   const [reviewNotice, setReviewNotice] = useState('')
-  const traceIdRef = useRef(0)
   const [authMessage, setAuthMessage] = useState('')
   const [ageGateOpen, setAgeGateOpen] = useState(false)
   const [ageGateError, setAgeGateError] = useState('')
+  const [ageNotice, setAgeNotice] = useState('')
   const [feedbackSubmittedMessage, setFeedbackSubmittedMessage] = useState('')
   const [authContext, setAuthContext] = useState('student')
   const [submissionClock, setSubmissionClock] = useState(Date.now())
@@ -1336,7 +1314,6 @@ function App() {
         ageConfirmationCheckInFlightRef.current.clear()
         ageConfirmationStatusRef.current.clear()
         ageGateActiveForUidRef.current = null
-        setAuthAgeStatus('idle')
 
         if (reviewerUnauthorizedRef.current) {
           setAuthContext('student')
@@ -1370,11 +1347,9 @@ function App() {
 
       const normalizedEmail = nextUser.email?.toLowerCase() || ''
       setScreen('loading')
-      setAuthAgeStatus('checking')
 
       if (ageConfirmationConfirmedRef.current === nextUser.uid || ageConfirmationStatusRef.current.has(nextUser.uid)) {
         setAuthMessage('')
-        setAuthAgeStatus('confirmed')
       } else {
         if (ageConfirmationCheckInFlightRef.current.has(nextUser.uid)) {
           return
@@ -1390,7 +1365,6 @@ function App() {
             setAgeGateOpen(true)
             setAgeGateError('We could not verify your age confirmation right now. Please try again.')
             setScreen('auth')
-            setAuthAgeStatus('blocked')
             return
           }
 
@@ -1401,13 +1375,11 @@ function App() {
             setAgeGateOpen(true)
             setAgeGateError('DraftSpace accounts are for users who are 13 or older.')
             setScreen('auth')
-            setAuthAgeStatus('blocked')
             return
           }
 
           ageConfirmationConfirmedRef.current = nextUser.uid
           ageConfirmationStatusRef.current.add(nextUser.uid)
-          setAuthAgeStatus('confirmed')
         } finally {
           ageConfirmationCheckInFlightRef.current.delete(nextUser.uid)
         }
@@ -1558,31 +1530,24 @@ function App() {
     }
 
     setAuthContext('student')
-    const flowId = `google-flow:${Date.now()}:${Math.random().toString(16).slice(2, 8)}`
-    console.log('[age-trace]', flowId, 'handleGoogleSignIn-start', { confirmedAge })
 
     try {
       if (!confirmedAge) {
         const result = await signInWithPopup(auth, googleProvider)
         const user = result.user
         const normalizedEmail = user.email?.toLowerCase() || ''
-        console.log('[age-trace]', flowId, 'google-auth-complete', { uid: user.uid })
 
         setScreen('loading')
-        setAuthAgeStatus('checking')
         ageConfirmationInFlightRef.current = user.uid
 
         try {
           const storedAgeConfirmed = await checkStoredAgeConfirmation(user.uid)
-          console.log('[age-trace]', flowId, 'post-auth-age-check', { uid: user.uid, storedAgeConfirmed })
 
           if (storedAgeConfirmed === null) {
             ageGateActiveForUidRef.current = user.uid
-            console.log('[age-trace]', flowId, 'open-age-gate', { trigger: 'post-auth-check-null', uid: user.uid })
             setAuthMessage('We could not verify your age confirmation. Please try again.')
             setAgeGateError('We could not verify your age confirmation right now. Please try again.')
             setAgeGateOpen(true)
-            setAuthAgeStatus('blocked')
             setScreen('auth')
             await signOut(auth)
             return
@@ -1590,18 +1555,15 @@ function App() {
 
           if (!storedAgeConfirmed) {
             ageGateActiveForUidRef.current = user.uid
-            console.log('[age-trace]', flowId, 'open-age-gate', { trigger: 'first-time-user-needs-age-confirmation', uid: user.uid })
             setAuthMessage('We need to confirm that you are 13 or older before continuing.')
             setAgeGateError('DraftSpace accounts are for users who are 13 or older.')
             setAgeGateOpen(true)
-            setAuthAgeStatus('blocked')
             setScreen('auth')
             return
           }
 
           ageConfirmationConfirmedRef.current = user.uid
           ageConfirmationStatusRef.current.add(user.uid)
-          setAuthAgeStatus('confirmed')
         } finally {
           ageConfirmationInFlightRef.current = null
         }
@@ -1633,29 +1595,22 @@ function App() {
 
       ageConfirmationInFlightRef.current = user.uid
       setScreen('loading')
-      setAuthAgeStatus('checking')
 
       try {
         const persisted = await persistAgeConfirmation(user)
-        console.log('[age-trace]', flowId, 'persist-result', { uid: user.uid, persisted })
         if (!persisted) {
-          console.log('[age-trace]', flowId, 'open-age-gate', { trigger: 'persist-failed', uid: user.uid })
           setAgeGateError('We could not save your age confirmation. Please try again.')
           setAgeGateOpen(true)
           setAuthMessage('We could not complete your account setup. Please try again.')
-          setAuthAgeStatus('blocked')
           setScreen('auth')
           await signOut(auth)
           return
         }
 
         const verifiedAfterSave = await checkStoredAgeConfirmation(user.uid)
-        console.log('[age-trace]', flowId, 'verified-after-save', { uid: user.uid, verifiedAfterSave })
         if (verifiedAfterSave !== true) {
-          console.log('[age-trace]', flowId, 'open-age-gate', { trigger: 'verified-after-save-failed', uid: user.uid })
           setAgeGateError('We could not confirm that your age information was saved. Please try again.')
           setAgeGateOpen(true)
-          setAuthAgeStatus('blocked')
           setScreen('auth')
           setAuthMessage('We could not complete your account setup. Please try again.')
           await signOut(auth)
@@ -1665,7 +1620,6 @@ function App() {
         ageConfirmationConfirmedRef.current = user.uid
         ageConfirmationStatusRef.current.add(user.uid)
         ageGateActiveForUidRef.current = null
-        setAuthAgeStatus('confirmed')
       } finally {
         ageConfirmationInFlightRef.current = null
       }
@@ -1688,7 +1642,13 @@ function App() {
       setScreen('onboarding')
       setAuthMessage('')
     } catch (error) {
-      setAuthMessage(error.message || 'Google sign-in did not complete.')
+      const errorCode = error?.code || ''
+      if (errorCode === 'auth/popup-closed-by-user' || errorCode === 'auth/cancelled-popup-request') {
+        setAuthMessage('')
+        setScreen('auth')
+        return
+      }
+      setAuthMessage('Google sign-in did not complete. Please try again.')
     }
   }
 
@@ -1709,7 +1669,6 @@ function App() {
     ageConfirmationCheckInFlightRef.current.clear()
     ageConfirmationStatusRef.current.clear()
     ageGateActiveForUidRef.current = null
-    setAuthAgeStatus('idle')
     setScreen('landing')
     setAuthMessage('You signed out. Sign in again anytime.')
   }
@@ -2325,6 +2284,12 @@ function App() {
 
   return (
     <div className="page-shell">
+      {ageNotice && (
+        <div className="age-notice-banner" role="status" aria-live="polite">
+          <span>{ageNotice}</span>
+          <button type="button" className="age-notice-close" aria-label="Close notice" onClick={() => setAgeNotice('')}>×</button>
+        </div>
+      )}
       {ageGateOpen && (
         <div className="age-gate-backdrop" role="dialog" aria-modal="true" aria-labelledby="age-gate-title">
           <div className="age-gate-card">
@@ -2347,7 +2312,6 @@ function App() {
                   }
 
                   setScreen('loading')
-                  setAuthAgeStatus('checking')
                   ageConfirmationInFlightRef.current = currentUser.uid
 
                   try {
@@ -2355,7 +2319,6 @@ function App() {
                     if (!persisted) {
                       setAgeGateError('We could not save your age confirmation. Please try again.')
                       setAgeGateOpen(true)
-                      setAuthAgeStatus('blocked')
                       setScreen('auth')
                       setAuthMessage('We could not complete your account setup. Please try again.')
                       return
@@ -2365,7 +2328,6 @@ function App() {
                     if (verifiedAfterSave !== true) {
                       setAgeGateError('We could not confirm that your age information was saved. Please try again.')
                       setAgeGateOpen(true)
-                      setAuthAgeStatus('blocked')
                       setScreen('auth')
                       setAuthMessage('We could not complete your account setup. Please try again.')
                       return
@@ -2374,7 +2336,6 @@ function App() {
                     ageConfirmationConfirmedRef.current = currentUser.uid
                     ageConfirmationStatusRef.current.add(currentUser.uid)
                     ageGateActiveForUidRef.current = null
-                    setAuthAgeStatus('confirmed')
                   } finally {
                     ageConfirmationInFlightRef.current = null
                   }
@@ -2404,9 +2365,10 @@ function App() {
                 type="button"
                 className="button secondary full age-gate-deny"
                 onClick={async () => {
-                  const message = 'DraftSpace accounts are for users who are 13 or older. Please ask a parent or guardian to help you if needed.'
-                  setAgeGateError(message)
-                  setAuthMessage(message)
+                  const message = 'Please get a parent or guardian to help you if needed.'
+                  setAgeGateOpen(false)
+                  setAgeGateError('')
+                  setAgeNotice(message)
                   setScreen('auth')
                   if (auth?.currentUser) {
                     await signOut(auth)
