@@ -4,7 +4,7 @@ import { supabase } from './supabaseClient'
 import './App.css'
 import { auth, googleProvider, hasFirebaseConfig, db } from './firebase'
 const privacyPolicyUrl = `${import.meta.env.BASE_URL}reference/draftspace-privacy-policy%20(1).html`
-const termsUrl = `${import.meta.env.BASE_URL}reference/draftspace-terms-of-service%20(1).html`
+const termsUrl = `${import.meta.env.BASE_URL}reference/draftspace-terms-of-service-updated%20(1).html`
 
 const writingOptions = [
   'Creative Writing',
