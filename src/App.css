@@ -470,6 +470,16 @@
   color: var(--text);
 }
 
+.tiny-note.legal-notice a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.tiny-note.legal-notice a:hover {
+  color: var(--text-h);
+}
+
 .stacked-form,
 .feedback-form,
 .chat-form {
