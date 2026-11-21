@@ -3,6 +3,8 @@ import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth'
 import { supabase } from './supabaseClient'
 import './App.css'
 import { auth, googleProvider, hasFirebaseConfig, db } from './firebase'
+const privacyPolicyUrl = `${import.meta.env.BASE_URL}reference/draftspace-privacy-policy%20(1).html`
+const termsUrl = `${import.meta.env.BASE_URL}reference/draftspace-terms-of-service%20(1).html`
 
 const writingOptions = [
   'Creative Writing',
@@ -2583,6 +2585,16 @@ function App() {
             }}>
               Continue with Google
             </button>
+            <p className="tiny-note legal-notice">
+  By creating an account with Google, you agree to our{" "}
+  <a href={termsUrl} target="_blank" rel="noopener noreferrer">
+    Terms of Service
+  </a>{" "}
+  and{" "}
+  <a href={privacyPolicyUrl} target="_blank" rel="noopener noreferrer">
+    Privacy Policy
+  </a>.
+</p>
             {authMessage && <p className="tiny-note">{authMessage}</p>}
             {!hasFirebaseConfig && (
               <p className="tiny-note">
@@ -3257,20 +3269,26 @@ function App() {
       </main>
 
       <footer className="footer">
-        <div>
-          <strong>DraftSpace</strong>
-          <p>Free feedback for students who want to be heard.</p>
-        </div>
-        <div>
-          <strong>Contact</strong>
-          <a href="mailto:hello@draftspace.studio">draftspacesupport@gmail.com</a>
-        </div>
-        <div>
-          <strong>Explore</strong>
-          <a href="#why">Why it exists</a>
-        </div>
-        <p className="footer-note">Great writing grows through conversation.</p>
-      </footer>
+  <div>
+    <strong>DraftSpace</strong>
+    <p>Free feedback for students who want to be heard.</p>
+  </div>
+  <div>
+    <strong>Contact</strong>
+    <a href="mailto:draftspacesupport@gmail.com">draftspacesupport@gmail.com</a>
+  </div>
+  <div>
+    <strong>Explore</strong>
+    <a href="#why">Why it exists</a>
+    <a href={privacyPolicyUrl} target="_blank" rel="noopener noreferrer">
+      Privacy Policy
+    </a>
+    <a href={termsUrl} target="_blank" rel="noopener noreferrer">
+      Terms of Service
+    </a>
+  </div>
+  <p className="footer-note">Great writing grows through conversation.</p>
+</footer>
     </div>
   )
 }
